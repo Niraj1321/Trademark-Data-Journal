@@ -12,7 +12,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 
 from ..config.database import get_db
-from ..models.models import ScraperLog, ExecutionType, ExecutionStatus, ExtractionStatus
+from ..models.models import Journal, PDFFile, TrademarkApplication, ScraperLog, ExecutionType, ExecutionStatus, ExtractionStatus
 from ..services.scraper_service import TrademarkScraper
 from ..services.pdf_extractor_service import PDFExtractor
 from ..config.settings import settings
@@ -75,7 +75,7 @@ def run_scraper_sync(db: Session, execution_type: ExecutionType = ExecutionType.
             "journals": [j.journal_number for j in journals]
         }
         
-        print(f"✅ Scraper completed successfully")
+        print(f"[OK] Scraper completed successfully")
         print(f"   Journals: {log_entry.journals_found}")
         print(f"   PDFs: {log_entry.pdfs_downloaded}")
         print(f"   Records: {log_entry.records_extracted}")
@@ -83,7 +83,7 @@ def run_scraper_sync(db: Session, execution_type: ExecutionType = ExecutionType.
     except Exception as e:
         log_entry.status = ExecutionStatus.FAILURE
         log_entry.error_message = str(e)
-        print(f"❌ Scraper failed: {str(e)}")
+        print(f"[ERROR] Scraper failed: {str(e)}")
         import traceback
         traceback.print_exc()
     
@@ -100,52 +100,139 @@ async def run_scraper_task(db: Session, execution_type: ExecutionType = Executio
     await loop.run_in_executor(executor, run_scraper_sync, db, execution_type)
 
 
+@router.get("/stream")
+@router.post("/stream")
+async def stream_full_scraper(db: Session = Depends(get_db)):
+    """
+    Run full scraper (portal fetch -> parallel download -> fast extraction) with live SSE stream
+    """
+    import queue
+    import threading
+
+    def event_generator():
+        q = queue.Queue()
+
+        def callback(data):
+            q.put(data)
+
+        def worker():
+            try:
+                callback({"type": "start", "message": "Initiating high-speed scraper..."})
+                
+                scraper = TrademarkScraper(db)
+                extractor = PDFExtractor(db)
+                
+                journals = scraper.scrape_latest_journals(
+                    max_journals=settings.MAX_JOURNALS_TO_SCRAPE,
+                    progress_callback=callback
+                )
+                
+                # Fast Extract
+                extraction_stats = extractor.extract_all_pending(progress_callback=callback)
+                
+                # Update journal totals
+                for journal in journals:
+                    count = db.query(TrademarkApplication)\
+                        .filter(TrademarkApplication.journal_id == journal.id)\
+                        .count()
+                    journal.total_trademarks = count
+                db.commit()
+                
+                total_pdfs = sum(j.pdf_count for j in journals)
+                records_count = extraction_stats.get('records', 0)
+                
+                callback({
+                    "type": "complete",
+                    "step": "all_complete",
+                    "journals": len(journals),
+                    "pdfs": total_pdfs,
+                    "records": records_count,
+                    "message": f"Scraping & extraction completed! {len(journals)} journal, {total_pdfs} PDFs, {records_count:,} trademarks."
+                })
+            except Exception as err:
+                callback({"type": "error", "message": str(err)})
+            finally:
+                q.put(None)  # Sentinel to finish
+
+        t = threading.Thread(target=worker)
+        t.start()
+
+        while True:
+            try:
+                item = q.get(timeout=120)
+                if item is None:
+                    break
+                yield f"data: {json.dumps(item)}\n\n"
+            except queue.Empty:
+                yield f"data: {json.dumps({'type': 'ping', 'message': 'Processing...'})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
 @router.post("/download-pdfs")
 async def download_pdfs_only(db: Session = Depends(get_db)):
     """
     Download PDFs only (no extraction) with real-time progress via SSE
     """
+    import queue
+    import threading
+
     def generate_download_progress() -> Generator:
-        try:
-            # Initialize scraper
-            scraper = TrademarkScraper(db)
-            
-            # Send start event
-            yield f"data: {json.dumps({'type': 'start', 'message': 'Starting PDF download...'})}\n\n"
-            
-            # Scrape journals (synchronous with progress)
-            journals = scraper.scrape_latest_journals(
-                max_journals=settings.MAX_JOURNALS_TO_SCRAPE
-            )
-            
-            total_journals = len(journals)
-            total_pdfs = sum(j.pdf_count for j in journals)
-            
-            # Send progress updates
-            yield f"data: {json.dumps({
-                'type': 'progress',
-                'journals_found': total_journals,
-                'pdfs_downloaded': total_pdfs,
-                'message': f'Downloaded {total_pdfs} PDFs from {total_journals} journals'
-            })}\n\n"
-            
-            # Send completion
-            yield f"data: {json.dumps({
-                'type': 'complete',
-                'journals': total_journals,
-                'pdfs': total_pdfs,
-                'message': 'PDF download completed'
-            })}\n\n"
-            
-        except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
-    
+        q = queue.Queue()
+
+        def callback(data):
+            q.put(data)
+
+        def worker():
+            try:
+                scraper = TrademarkScraper(db)
+                journals = scraper.scrape_latest_journals(
+                    max_journals=settings.MAX_JOURNALS_TO_SCRAPE,
+                    progress_callback=callback
+                )
+                
+                total_journals = len(journals)
+                total_pdfs = sum(j.pdf_count for j in journals)
+                
+                callback({
+                    "type": "complete",
+                    "step": "download_complete",
+                    "journals": total_journals,
+                    "pdfs": total_pdfs,
+                    "message": f"Successfully downloaded {total_pdfs} PDFs from {total_journals} journal(s)"
+                })
+            except Exception as e:
+                callback({"type": "error", "message": str(e)})
+            finally:
+                q.put(None)
+
+        t = threading.Thread(target=worker)
+        t.start()
+
+        while True:
+            try:
+                item = q.get(timeout=120)
+                if item is None:
+                    break
+                yield f"data: {json.dumps(item)}\n\n"
+            except queue.Empty:
+                yield f"data: {json.dumps({'type': 'ping', 'message': 'Downloading...'})}\n\n"
+
     return StreamingResponse(
         generate_download_progress(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
         }
     )
 
@@ -155,54 +242,65 @@ async def extract_pdfs_only(db: Session = Depends(get_db)):
     """
     Extract data from PDFs only (assumes PDFs already downloaded) with real-time progress
     """
+    import queue
+    import threading
+
     def generate_extraction_progress() -> Generator:
-        try:
-            extractor = PDFExtractor(db)
-            
-            # Send start event
-            yield f"data: {json.dumps({'type': 'start', 'message': 'Starting PDF extraction...'})}\n\n"
-            
-            # Get pending PDFs count
-            from ..models.models import PDFFile
-            pending_count = db.query(PDFFile).filter(
-                PDFFile.extraction_status == ExtractionStatus.PENDING
-            ).count()
-            
-            yield f"data: {json.dumps({
-                'type': 'progress',
-                'pending_pdfs': pending_count,
-                'message': f'Found {pending_count} PDFs to extract'
-            })}\n\n"
-            
-            # Extract all pending
-            extraction_stats = extractor.extract_all_pending()
-            
-            # Update journal totals
-            from ..models.models import Journal, TrademarkApplication
-            journals = db.query(Journal).all()
-            for journal in journals:
-                trademark_count = db.query(TrademarkApplication)\
-                    .filter(TrademarkApplication.journal_id == journal.id)\
-                    .count()
-                journal.total_trademarks = trademark_count
-            
-            db.commit()
-            
-            # Send completion
-            records_count = extraction_stats['records']
-            pdfs_processed = extraction_stats['pdfs_processed']
-            completion_message = f"Extracted {records_count} records from {pdfs_processed} PDFs"
-            yield f"data: {json.dumps({'type': 'complete', 'records': records_count, 'pdfs_processed': pdfs_processed, 'message': completion_message})}\n\n"
-            
-        except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
-    
+        q = queue.Queue()
+
+        def callback(data):
+            q.put(data)
+
+        def worker():
+            try:
+                extractor = PDFExtractor(db)
+                
+                extraction_stats = extractor.extract_all_pending(progress_callback=callback)
+                
+                # Update journal totals
+                journals = db.query(Journal).all()
+                for journal in journals:
+                    trademark_count = db.query(TrademarkApplication)\
+                        .filter(TrademarkApplication.journal_id == journal.id)\
+                        .count()
+                    journal.total_trademarks = trademark_count
+                
+                db.commit()
+                
+                records_count = extraction_stats.get('records', 0)
+                pdfs_processed = extraction_stats.get('pdfs_processed', 0)
+                
+                callback({
+                    "type": "complete",
+                    "step": "extract_complete",
+                    "records": records_count,
+                    "pdfs_processed": pdfs_processed,
+                    "message": f"Extracted {records_count:,} trademarks from {pdfs_processed} PDFs"
+                })
+            except Exception as e:
+                callback({"type": "error", "message": str(e)})
+            finally:
+                q.put(None)
+
+        t = threading.Thread(target=worker)
+        t.start()
+
+        while True:
+            try:
+                item = q.get(timeout=120)
+                if item is None:
+                    break
+                yield f"data: {json.dumps(item)}\n\n"
+            except queue.Empty:
+                yield f"data: {json.dumps({'type': 'ping', 'message': 'Extracting...'})}\n\n"
+
     return StreamingResponse(
         generate_extraction_progress(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
         }
     )
 

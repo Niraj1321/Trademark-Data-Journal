@@ -1,11 +1,14 @@
 """
-Web scraper service for Trademark Journal website
+Web scraper service for Trademark Journal website (High-Speed Concurrent Edition)
 """
-import os
-from datetime import datetime
-from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Callable
 from playwright.sync_api import sync_playwright, Page
+from pathlib import Path
+from datetime import datetime
+import requests
+import re
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from sqlalchemy.orm import Session
 
 from ..models.models import Journal, PDFFile, JournalStatus, ExtractionStatus
@@ -14,27 +17,45 @@ from ..config.settings import settings
 
 class TrademarkScraper:
     """
-    Scrapes trademark journal PDFs from IP India website
+    Scrapes trademark journal PDFs from IP India website with concurrent high-speed downloads.
     """
     
     BASE_URL = "https://search.ipindia.gov.in/IPOJournal/Journal/Trademark"
+    DOWNLOAD_POST_URL = "https://search.ipindia.gov.in/IPOJournal/Journal/ViewJournal"
     
     def __init__(self, db: Session):
         self.db = db
         self.download_dir = Path(settings.DOWNLOAD_DIR)
         self.download_dir.mkdir(exist_ok=True)
     
-    def scrape_latest_journals(self, max_journals: int = 2) -> List[Journal]:
+    def scrape_latest_journals(
+        self, 
+        max_journals: int = 1,
+        progress_callback: Optional[Callable[[Dict], None]] = None
+    ) -> List[Journal]:
         """
         Scrape latest journal entries from the website
         
         Args:
-            max_journals: Maximum number of journals to scrape (default: 2)
+            max_journals: Maximum number of journals to scrape (default: 1)
+            progress_callback: Optional callback for live progress streaming
         
         Returns:
             List of Journal objects
         """
         journals = []
+        
+        if progress_callback:
+            progress_callback({
+                "step": "connect",
+                "message": "Connecting to IP India Trademark Journal portal..."
+            })
+            
+        print(f"\n========================================================")
+        print(f" [1/3] 🌐 Connecting to IP India Trademark Journal Portal...")
+        print(f"========================================================")
+        
+        start_total = time.time()
         
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
@@ -42,31 +63,36 @@ class TrademarkScraper:
             page = context.new_page()
             
             try:
-                print(f"📡 Navigating to {self.BASE_URL}...")
                 page.goto(self.BASE_URL, timeout=60000)
-                page.wait_for_selector("table", timeout=30000)
+                page.wait_for_selector("table#Journal", timeout=30000)
                 
                 # Extract table data
                 journal_data = self._extract_table_data(page, max_journals)
-                print(f"✅ Found {len(journal_data)} journal entries")
+                print(f"[✓] Successfully retrieved {len(journal_data)} journal entries from portal")
+                
+                if progress_callback:
+                    progress_callback({
+                        "step": "table_extracted",
+                        "journals_found": len(journal_data),
+                        "message": f"Found {len(journal_data)} latest journal(s)"
+                    })
                 
                 # Process each journal
-                for data in journal_data:
-                    # Check if already exists
+                for j_idx, data in enumerate(journal_data, 1):
+                    # Check if already exists in DB
                     existing = self.db.query(Journal).filter(
                         Journal.journal_number == data["journal_number"]
                     ).first()
                     
                     if existing:
-                        print(f"📋 Journal {data['journal_number']} already exists")
-                        # Check if it has PDFs already
-                        if existing.pdf_count > 0:
-                            print(f"   ✅ Already has {existing.pdf_count} PDFs, skipping download...")
-                            journals.append(existing)
-                            continue
-                        else:
-                            print(f"   🔄 No PDFs yet, attempting download...")
-                            journal = existing
+                        journal = existing
+                        # Update dates if missing
+                        if not journal.publication_date and data.get("publication_date"):
+                            journal.publication_date = data["publication_date"]
+                        if not journal.availability_date and data.get("availability_date"):
+                            journal.availability_date = data["availability_date"]
+                        self.db.commit()
+                        print(f"[INFO] Journal #{data['journal_number']} already in DB. Checking PDF files...")
                     else:
                         # Create new journal entry
                         journal = Journal(
@@ -78,283 +104,374 @@ class TrademarkScraper:
                         self.db.add(journal)
                         self.db.commit()
                         self.db.refresh(journal)
-                        
-                        print(f"📝 Created journal entry: {journal.journal_number}")
+                        print(f"[NEW] Registered Journal #{journal.journal_number} (Pub: {data['publication_date']})")
                     
-                    # Download PDFs for this journal
-                    self._download_journal_pdfs(page, journal, data["row_index"])
-                    
+                    # Download PDFs concurrently for this journal
+                    self._download_journal_pdfs_parallel(journal, data["pdf_forms"], progress_callback)
                     journals.append(journal)
-                
+                    
             except Exception as e:
-                print(f"❌ Error during scraping: {str(e)}")
+                print(f"[ERROR] Scraper failed during web navigation: {str(e)}")
+                if progress_callback:
+                    progress_callback({"step": "error", "message": f"Scraper error: {str(e)}"})
                 raise
             finally:
                 browser.close()
-        
+                
+        elapsed = time.time() - start_total
+        print(f"\n[✓] Journal scraping and downloads completed in {elapsed:.1f}s")
         return journals
     
     def _extract_table_data(self, page: Page, max_journals: int) -> List[Dict]:
         """
-        Extract journal data from table
+        Extract journal data from table, including PDF form details
         """
         journal_data = []
         
-        # Get table rows (skip header)
-        rows = page.query_selector_all("table tbody tr")
+        try:
+            # Expand table length if dropdown exists
+            select = page.query_selector("select[name='Journal_length']")
+            if select:
+                page.select_option("select[name='Journal_length']", "-1")
+                page.wait_for_timeout(1000)
+        except Exception:
+            pass
+            
+        rows = page.query_selector_all("table#Journal tbody tr")
+        print(f"[*] Found {len(rows)} rows in journal table. Selecting latest {max_journals}...")
         
         for idx, row in enumerate(rows[:max_journals]):
             try:
                 cells = row.query_selector_all("td")
-                
-                if len(cells) >= 4:
-                    # Extract text from cells
-                    sr_no = cells[0].inner_text()
-                    journal_no = cells[1].inner_text()
-                    pub_date = cells[2].inner_text()
-                    avail_date = cells[3].inner_text()
+                if len(cells) >= 5:
+                    sr_no = cells[0].inner_text().strip()
+                    journal_no = cells[1].inner_text().strip()
+                    pub_date = cells[2].inner_text().strip()
+                    avail_date = cells[3].inner_text().strip()
                     
-                    # Parse dates (format: DD/MM/YYYY)
-                    pub_date_obj = datetime.strptime(pub_date.strip(), "%d/%m/%Y").date()
-                    avail_date_obj = datetime.strptime(avail_date.strip(), "%d/%m/%Y").date()
+                    # Parse dates
+                    try:
+                        pub_date_obj = datetime.strptime(pub_date, "%d/%m/%Y").date()
+                    except Exception:
+                        pub_date_obj = datetime.utcnow().date()
+                        
+                    try:
+                        avail_date_obj = datetime.strptime(avail_date, "%d/%m/%Y").date()
+                    except Exception:
+                        avail_date_obj = datetime.utcnow().date()
+                    
+                    # Extract PDF forms
+                    pdf_forms = []
+                    forms = cells[4].query_selector_all("form")
+                    
+                    for form in forms:
+                        hidden_input = form.query_selector("input[name='FileName']")
+                        btn = form.query_selector("button") or form.query_selector("input[type='submit']") or form.query_selector("input[type='button']")
+                        
+                        if hidden_input:
+                            filename = hidden_input.get_attribute("value")
+                            if filename:
+                                button_text = ""
+                                if btn:
+                                    button_text = btn.inner_text().strip() or btn.get_attribute("value") or ""
+                                button_text = " ".join(button_text.split())
+                                
+                                pdf_forms.append({
+                                    "filename": filename,
+                                    "button_text": button_text or f"Part-{len(pdf_forms) + 1}",
+                                })
+                    
+                    if not pdf_forms:
+                        # Fallback: find all input[name='FileName'] directly in the cell
+                        all_inputs = cells[4].query_selector_all("input[name='FileName']")
+                        for in_el in all_inputs:
+                            filename = in_el.get_attribute("value")
+                            if filename:
+                                pdf_forms.append({
+                                    "filename": filename,
+                                    "button_text": f"Part-{len(pdf_forms) + 1}"
+                                })
                     
                     journal_data.append({
-                        "sr_no": sr_no.strip(),
-                        "journal_number": journal_no.strip(),
+                        "sr_no": sr_no,
+                        "journal_number": journal_no,
                         "publication_date": pub_date_obj,
                         "availability_date": avail_date_obj,
-                        "row_index": idx
+                        "row_index": idx,
+                        "pdf_forms": pdf_forms,
                     })
                     
-                    print(f"📋 Extracted: Journal {journal_no.strip()} - {pub_date.strip()}")
-                    
+                    print(f"   ↳ Journal #{journal_no} | Published: {pub_date} | {len(pdf_forms)} PDF parts available")
             except Exception as e:
-                print(f"⚠️  Error extracting row {idx}: {str(e)}")
+                print(f"[WARN] Error extracting row {idx}: {str(e)}")
                 continue
         
         return journal_data
     
-    def _download_journal_pdfs(self, page: Page, journal: Journal, row_index: int):
+    def _download_single_pdf(
+        self, 
+        session: requests.Session, 
+        journal_id: int, 
+        journal_number: str, 
+        journal_dir: Path, 
+        form_data: Dict, 
+        form_idx: int, 
+        total_forms: int
+    ) -> Optional[Dict]:
         """
-        Download all PDFs for a specific journal
+        Download a single PDF part via HTTP POST.
+        """
+        filename = form_data["filename"]
+        button_text = form_data["button_text"]
+        class_range = self._extract_class_range(button_text, form_idx)
+        
+        safe_filename = filename.split("\\")[-1].replace(" ", "_")
+        if not safe_filename.lower().endswith('.pdf'):
+            safe_filename += '.pdf'
+        filepath = journal_dir / safe_filename
+        
+        def is_valid_pdf(p: Path) -> bool:
+            if not p.exists() or p.stat().st_size < 10000:
+                return False
+            try:
+                with open(p, 'rb') as f:
+                    header = f.read(5)
+                    if header != b'%PDF-':
+                        return False
+                    f.seek(-1024, 2)
+                    tail = f.read()
+                    if b'%%EOF' not in tail:
+                        return False
+                return True
+            except Exception:
+                return False
+
+        # Check if already downloaded and valid on disk
+        if is_valid_pdf(filepath):
+            file_size = filepath.stat().st_size
+            return {
+                "journal_id": journal_id,
+                "file_name": safe_filename,
+                "file_path": str(filepath),
+                "class_range": class_range,
+                "file_size_bytes": file_size,
+                "download_url": filename,
+                "status": "cached",
+                "index": form_idx + 1,
+                "total": total_forms
+            }
+        
+        # If exists but corrupted, remove it
+        if filepath.exists():
+            try:
+                filepath.unlink()
+            except Exception:
+                pass
+        
+        # Download from IP India server using a temporary file
+        tmp_filepath = filepath.with_suffix('.tmp')
+        t0 = time.time()
+        
+        try:
+            response = session.post(
+                self.DOWNLOAD_POST_URL,
+                data={"FileName": filename},
+                timeout=settings.DOWNLOAD_TIMEOUT,
+                stream=True
+            )
+            
+            if response.status_code == 200:
+                with open(tmp_filepath, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=65536):
+                        if chunk:
+                            f.write(chunk)
+                
+                if is_valid_pdf(tmp_filepath):
+                    tmp_filepath.replace(filepath)
+                    file_size = filepath.stat().st_size
+                    elapsed = time.time() - t0
+                    return {
+                        "journal_id": journal_id,
+                        "file_name": safe_filename,
+                        "file_path": str(filepath),
+                        "class_range": class_range,
+                        "file_size_bytes": file_size,
+                        "download_url": filename,
+                        "status": "downloaded",
+                        "elapsed": elapsed,
+                        "index": form_idx + 1,
+                        "total": total_forms
+                    }
+                else:
+                    # In case EOF marker is slightly off, rename if > 500KB and starts with %PDF
+                    if tmp_filepath.exists() and tmp_filepath.stat().st_size > 500000:
+                        with open(tmp_filepath, 'rb') as f:
+                            hdr = f.read(5)
+                        if hdr == b'%PDF-':
+                            tmp_filepath.replace(filepath)
+                            file_size = filepath.stat().st_size
+                            return {
+                                "journal_id": journal_id,
+                                "file_name": safe_filename,
+                                "file_path": str(filepath),
+                                "class_range": class_range,
+                                "file_size_bytes": file_size,
+                                "download_url": filename,
+                                "status": "downloaded",
+                                "elapsed": time.time() - t0,
+                                "index": form_idx + 1,
+                                "total": total_forms
+                            }
+                    tmp_filepath.unlink(missing_ok=True)
+                    return None
+            else:
+                tmp_filepath.unlink(missing_ok=True)
+                return None
+        except Exception as e:
+            tmp_filepath.unlink(missing_ok=True)
+            print(f"[WARN] Error downloading {safe_filename}: {str(e)}")
+            return None
+
+    def _download_journal_pdfs_parallel(
+        self, 
+        journal: Journal, 
+        pdf_forms: List[Dict],
+        progress_callback: Optional[Callable[[Dict], None]] = None
+    ):
+        """
+        Download all PDFs for a journal concurrently using ThreadPoolExecutor
         """
         try:
             journal.status = JournalStatus.PROCESSING
             self.db.commit()
             
-            # Create directory for this journal
             journal_dir = self.download_dir / journal.journal_number
             journal_dir.mkdir(exist_ok=True)
             
-            # Find the download cell in the row
-            rows = page.query_selector_all("table tbody tr")
-            row = rows[row_index]
-            download_cell = row.query_selector("td:last-child")
+            total_count = len(pdf_forms)
+            print(f"\n========================================================")
+            print(f" [2/3] 📥 Downloading {total_count} PDFs in Parallel (Journal #{journal.journal_number})...")
+            print(f"========================================================")
             
-            # Debug: Print cell HTML
-            cell_html = download_cell.inner_html()
-            print(f"🔍 Debug - Download cell HTML: {cell_html[:500]}")
+            if progress_callback:
+                progress_callback({
+                    "step": "download_start",
+                    "journal_number": journal.journal_number,
+                    "total_pdfs": total_count,
+                    "message": f"Downloading {total_count} PDFs concurrently for Journal #{journal.journal_number}..."
+                })
             
-            # Find all forms (new approach - website uses form submissions)
-            forms = download_cell.query_selector_all("form")
+            # Setup requests Session with connection pool
+            session = requests.Session()
+            adapter = requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=10, max_retries=3)
+            session.mount('https://', adapter)
+            session.mount('http://', adapter)
+            session.headers.update({
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            })
             
-            print(f"📥 Found {len(forms)} PDF forms for journal {journal.journal_number}")
+            try:
+                session.get(self.BASE_URL, timeout=20)
+            except Exception:
+                pass
             
-            pdf_count = 0
-            for form_idx, form in enumerate(forms):
-                try:
-                    # Get the hidden input with filename
-                    filename_input = form.query_selector("input[name='FileName']")
-                    button = form.query_selector("button")
-                    
-                    if filename_input and button:
-                        filename = filename_input.get_attribute("value")
-                        button_text = button.inner_text().strip()
-                        
-                        print(f"  📄 Form {form_idx + 1}: File={filename}, Button={button_text}")
-                        
-                        # Extract class range from button text or filename
-                        class_range = self._extract_class_range(button_text, form_idx)
-                        
-                        # Download the PDF by submitting the form
-                        pdf_file = self._download_pdf_from_form(
-                            page, form, filename, journal, journal_dir, class_range
-                        )
-                        
-                        if pdf_file:
-                            pdf_count += 1
-                    else:
-                        print(f"  ⏭️  Form {form_idx + 1} skipped - missing filename input or button")
-                        
-                except Exception as e:
-                    print(f"⚠️  Error processing form {form_idx + 1}: {str(e)}")
-                    import traceback
-                    traceback.print_exc()
-                    continue
+            pdf_records = []
+            downloaded_count = 0
             
-            # Update journal
-            journal.pdf_count = pdf_count
-            journal.status = JournalStatus.COMPLETED if pdf_count > 0 else JournalStatus.ERROR
-            if pdf_count == 0:
+            # Download concurrently with 2 workers (safe for PC performance)
+            with ThreadPoolExecutor(max_workers=min(2, max(1, total_count))) as pool:
+                futures = {
+                    pool.submit(
+                        self._download_single_pdf, 
+                        session, 
+                        journal.id, 
+                        journal.journal_number, 
+                        journal_dir, 
+                        form_data, 
+                        idx, 
+                        total_count
+                    ): form_data for idx, form_data in enumerate(pdf_forms)
+                }
+                
+                for future in as_completed(futures):
+                    result = future.result()
+                    if result:
+                        downloaded_count += 1
+                        size_mb = result["file_size_bytes"] / (1024 * 1024)
+                        status_tag = "✓ Cached" if result["status"] == "cached" else f"✓ Downloaded ({result.get('elapsed', 0):.1f}s)"
+                        
+                        print(f"   ↳ [{downloaded_count}/{total_count} ({int(downloaded_count/total_count*100)}%)] {result['file_name']} ({size_mb:.1f} MB) - {status_tag}")
+                        
+                        # Check/save to database
+                        existing_pdf = self.db.query(PDFFile).filter(
+                            PDFFile.journal_id == journal.id,
+                            PDFFile.file_name == result["file_name"]
+                        ).first()
+                        
+                        if not existing_pdf:
+                            pdf_file = PDFFile(
+                                journal_id=journal.id,
+                                file_name=result["file_name"],
+                                file_path=result["file_path"],
+                                class_range=result["class_range"],
+                                file_size_bytes=result["file_size_bytes"],
+                                download_url=result["download_url"],
+                                download_date=datetime.utcnow(),
+                                extraction_status=ExtractionStatus.PENDING
+                            )
+                            self.db.add(pdf_file)
+                            self.db.commit()
+                            self.db.refresh(pdf_file)
+                        
+                        if progress_callback:
+                            progress_callback({
+                                "step": "download_progress",
+                                "journal_number": journal.journal_number,
+                                "downloaded": downloaded_count,
+                                "total": total_count,
+                                "percentage": int(downloaded_count / total_count * 100),
+                                "filename": result["file_name"],
+                                "size_mb": round(size_mb, 1),
+                                "message": f"Downloaded [{downloaded_count}/{total_count}] {result['file_name']} ({size_mb:.1f} MB)"
+                            })
+            
+            # Update journal status
+            journal.pdf_count = downloaded_count
+            journal.status = JournalStatus.COMPLETED if downloaded_count > 0 else JournalStatus.ERROR
+            if downloaded_count == 0:
                 journal.error_message = "No PDFs downloaded"
-            
             self.db.commit()
-            print(f"✅ Downloaded {pdf_count} PDFs for journal {journal.journal_number}")
             
+            print(f"[✓] Parallel Download Done: {downloaded_count}/{total_count} PDFs saved for Journal #{journal.journal_number}")
+            
+            if progress_callback:
+                progress_callback({
+                    "step": "download_complete",
+                    "journal_number": journal.journal_number,
+                    "downloaded": downloaded_count,
+                    "total": total_count,
+                    "message": f"All {downloaded_count} PDFs downloaded successfully"
+                })
+                
         except Exception as e:
             journal.status = JournalStatus.ERROR
             journal.error_message = str(e)
             self.db.commit()
-            print(f"❌ Error downloading PDFs for journal {journal.journal_number}: {str(e)}")
-    
-    def _download_pdf_from_form(
-        self, page: Page, form, filename: str, journal: Journal, 
-        save_dir: Path, class_range: str
-    ) -> Optional[PDFFile]:
-        """
-        Download a PDF by submitting a form
-        """
-        try:
-            # Generate clean filename
-            safe_filename = filename.split("\\")[-1].replace(" ", "_")
-            filepath = save_dir / safe_filename
-            
-            # ✅ CHECK IF PDF ALREADY EXISTS (avoid duplicate downloads)
-            existing_pdf = self.db.query(PDFFile).filter(
-                PDFFile.journal_id == journal.id,
-                PDFFile.file_name == safe_filename
-            ).first()
-            
-            if existing_pdf and Path(existing_pdf.file_path).exists():
-                print(f"  ⏭️  Skipped {safe_filename} - already exists")
-                return existing_pdf
-            
-            # ✅ CHECK IF FILE ALREADY DOWNLOADED ON DISK
-            if filepath.exists():
-                file_size = filepath.stat().st_size
-                if file_size > 0:  # Valid file
-                    print(f"  ⏭️  File {safe_filename} exists on disk, creating DB record...")
-                    
-                    # Create DB record for existing file
-                    pdf_file = PDFFile(
-                        journal_id=journal.id,
-                        file_name=safe_filename,
-                        file_path=str(filepath),
-                        class_range=class_range,
-                        file_size_bytes=file_size,
-                        download_url=filename,
-                        download_date=datetime.utcnow(),
-                        extraction_status=ExtractionStatus.PENDING
-                    )
-                    self.db.add(pdf_file)
-                    self.db.commit()
-                    self.db.refresh(pdf_file)
-                    return pdf_file
-                else:
-                    # Delete empty/corrupted file
-                    filepath.unlink()
-            
-            print(f"  📄 Downloading {safe_filename}...")
-            
-            # Click the button and wait for download
-            with page.expect_download(timeout=settings.DOWNLOAD_TIMEOUT * 1000) as download_info:
-                button = form.query_selector("button")
-                button.click()
-            
-            download = download_info.value
-            download.save_as(str(filepath))
-            
-            file_size = filepath.stat().st_size
-            
-            # Create PDF file record
-            pdf_file = PDFFile(
-                journal_id=journal.id,
-                file_name=safe_filename,
-                file_path=str(filepath),
-                class_range=class_range,
-                file_size_bytes=file_size,
-                download_url=filename,  # Store original filename path
-                download_date=datetime.utcnow(),
-                extraction_status=ExtractionStatus.PENDING
-            )
-            
-            self.db.add(pdf_file)
-            self.db.commit()
-            self.db.refresh(pdf_file)
-            
-            print(f"  ✅ Downloaded {safe_filename} ({file_size / 1024 / 1024:.2f} MB)")
-            return pdf_file
-            
-        except Exception as e:
-            print(f"  ❌ Error downloading PDF from form: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            return None
-    
-    def _download_pdf(
-        self, page: Page, url: str, journal: Journal, 
-        save_dir: Path, class_range: str
-    ) -> Optional[PDFFile]:
-        """
-        Download a single PDF file
-        """
-        try:
-            # Make URL absolute if needed
-            if url.startswith("/"):
-                from urllib.parse import urljoin
-                url = urljoin(self.BASE_URL, url)
-            
-            # Generate filename
-            filename = f"journal_{journal.journal_number}_{class_range}.pdf"
-            filepath = save_dir / filename
-            
-            print(f"  📄 Downloading {filename}...")
-            
-            # Download using Playwright
-            with page.expect_download(timeout=settings.DOWNLOAD_TIMEOUT * 1000) as download_info:
-                page.goto(url)
-            
-            download = download_info.value
-            download.save_as(str(filepath))
-            
-            file_size = filepath.stat().st_size
-            
-            # Create PDF file record
-            pdf_file = PDFFile(
-                journal_id=journal.id,
-                file_name=filename,
-                file_path=str(filepath),
-                class_range=class_range,
-                file_size_bytes=file_size,
-                download_url=url,
-                download_date=datetime.utcnow(),
-                extraction_status=ExtractionStatus.PENDING
-            )
-            
-            self.db.add(pdf_file)
-            self.db.commit()
-            self.db.refresh(pdf_file)
-            
-            print(f"  ✅ Downloaded {filename} ({file_size / 1024 / 1024:.2f} MB)")
-            return pdf_file
-            
-        except Exception as e:
-            print(f"  ❌ Error downloading PDF: {str(e)}")
-            return None
-    
+            print(f"[ERROR] Failed downloading PDFs for Journal #{journal.journal_number}: {str(e)}")
+            if progress_callback:
+                progress_callback({"step": "error", "message": str(e)})
+
     def _extract_class_range(self, link_text: str, index: int) -> str:
         """
         Extract class range from link text or generate from index
         """
-        # Common patterns in link text
-        if "1-34" in link_text or "CLASS 1-34" in link_text.upper():
-            return "1-34"
-        elif "35-45" in link_text or "CLASS 35-45" in link_text.upper():
-            return "35-45"
-        elif "1-30" in link_text:
-            return "1-30"
-        elif "31-99" in link_text or "31" in link_text:
-            return "31-99"
-        else:
-            # Default based on index
-            return f"Part-{index + 1}"
+        text = link_text.upper().strip()
+        match = re.search(r'CLASS\s+(\d+)\s*-\s*(\d+)', text)
+        if match:
+            return f"Class {match.group(1)}-{match.group(2)}"
+        
+        match = re.search(r'(\d+)\s*-\s*(\d+)', text)
+        if match:
+            return f"Class {match.group(1)}-{match.group(2)}"
+        
+        return f"Part-{index + 1}"

@@ -16,7 +16,7 @@ def scheduled_scrape_job():
     """
     Job function to run the scraper on schedule
     """
-    print(f"\n⏰ Scheduled scraper job started at {datetime.now()}")
+    print(f"\n[*] Scheduled scraper job started at {datetime.now()}")
     
     # Create database session
     db = SessionLocal()
@@ -29,7 +29,7 @@ def scheduled_scrape_job():
         run_scraper_sync(db, ExecutionType.SCHEDULED)
         
     except Exception as e:
-        print(f"❌ Scheduled scraper job failed: {str(e)}")
+        print(f"[!] Scheduled scraper job failed: {str(e)}")
         import traceback
         traceback.print_exc()
     finally:
@@ -43,7 +43,7 @@ def start_scheduler():
     global scheduler
     
     if scheduler is not None:
-        print("⚠️  Scheduler already running")
+        print("[!] Scheduler already running")
         return
     
     scheduler = BackgroundScheduler()
@@ -74,7 +74,7 @@ def start_scheduler():
     )
     
     scheduler.start()
-    print(f"✅ Scheduler started - next run: {scheduler.get_jobs()[0].next_run_time}")
+    print(f"[+] Scheduler started - next run: {scheduler.get_jobs()[0].next_run_time}")
 
 
 def stop_scheduler():
@@ -86,4 +86,4 @@ def stop_scheduler():
     if scheduler is not None:
         scheduler.shutdown()
         scheduler = None
-        print("🛑 Scheduler stopped")
+        print("[-] Scheduler stopped")

@@ -34,6 +34,9 @@ class TrademarkResponse(BaseModel):
     id: int
     application_number: Optional[str]
     filing_date: Optional[date]
+    publication_date: Optional[date] = None
+    journal_number: Optional[str] = None
+    class_range: Optional[str] = None
     trademark_name: Optional[str]
     applicant_name: Optional[str]
     applicant_address: Optional[str]

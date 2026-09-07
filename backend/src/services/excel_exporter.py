@@ -70,6 +70,10 @@ class ExcelExporter:
                 query = query.filter(
                     TrademarkApplication.class_number == filters['class_number']
                 )
+            if filters.get('application_number'):
+                query = query.filter(
+                    TrademarkApplication.application_number.like(f"%{filters['application_number']}%")
+                )
             if filters.get('office_location'):
                 query = query.filter(
                     TrademarkApplication.office_location == filters['office_location']

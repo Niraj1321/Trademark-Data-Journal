@@ -14,6 +14,7 @@ export default function ExportButton({ type, filters, journalId, journalIds }) {
         const params = new URLSearchParams()
         if (filters?.journal_number) params.append('journal_number', filters.journal_number)
         if (filters?.class_number) params.append('class_number', filters.class_number)
+        if (filters?.application_number) params.append('application_number', filters.application_number)
         if (filters?.office_location) params.append('office_location', filters.office_location)
         if (filters?.search) params.append('search', filters.search)
         return `${baseUrl}/export/all?${params.toString()}`

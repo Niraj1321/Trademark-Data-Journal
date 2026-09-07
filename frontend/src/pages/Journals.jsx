@@ -8,12 +8,11 @@ import ErrorMessage from '../components/ErrorMessage'
 import Pagination from '../components/Pagination'
 import ExportButton from '../components/ExportButton'
 import { format } from 'date-fns'
-import { Eye, Trash2 } from 'lucide-react'
+import { Eye, Trash2, BookOpen, Calendar, ArrowUpRight } from 'lucide-react'
 
 export default function Journals() {
   const [page, setPage] = useState(1)
   const [status, setStatus] = useState('')
-  const [deleteConfirm, setDeleteConfirm] = useState(null)
   const queryClient = useQueryClient()
   
   const { data, isLoading, error } = useQuery({
@@ -25,19 +24,17 @@ export default function Journals() {
     mutationFn: deleteJournal,
     onSuccess: () => {
       queryClient.invalidateQueries(['journals'])
-      queryClient.invalidateQueries(['dashboard'])
-      setDeleteConfirm(null)
+      queryClient.invalidateQueries(['statistics'])
     }
   })
   
   const handleDelete = (journal) => {
     if (window.confirm(
-      `Are you sure you want to delete Journal ${journal.journal_number}?\n\n` +
-      `This will permanently delete:\n` +
-      `- ${journal.pdf_count} PDF files\n` +
-      `- ${journal.total_trademarks || 0} trademark records\n` +
-      `- Journal data from database\n\n` +
-      `This action cannot be undone!`
+      `Delete Journal #${journal.journal_number}?\n\n` +
+      `This will permanently remove:\n` +
+      `- ${journal.pdf_count} downloaded PDF parts\n` +
+      `- ${journal.total_trademarks || 0} indexed trademarks\n` +
+      `- Journal database records`
     )) {
       deleteMutation.mutate(journal.id)
     }
@@ -49,20 +46,17 @@ export default function Journals() {
   const journals = data?.journals || []
   const totalPages = data?.pages || 1
   
-  const getStatusBadge = (status) => {
-    const badges = {
-      pending: 'badge badge-warning',
-      processing: 'badge badge-info',
-      completed: 'badge badge-success',
-      error: 'badge badge-error'
-    }
-    return badges[status] || 'badge'
-  }
-  
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h2 className="text-3xl font-bold text-gray-900">Trademark Journals</h2>
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
+            Trademark Journals
+          </h1>
+          <p className="text-xs text-slate-500 mt-1">
+            Archived and extracted gazette publications from IP India.
+          </p>
+        </div>
         <div className="flex items-center space-x-3">
           <ExportButton 
             type="by-journal" 
@@ -72,115 +66,116 @@ export default function Journals() {
       </div>
       
       {/* Filters */}
-      <div className="card">
-        <div className="flex items-center space-x-4">
-          <label className="text-sm font-medium text-gray-700">Status:</label>
+      <div className="card !p-4 flex items-center justify-between">
+        <div className="flex items-center space-x-3 text-xs">
+          <label className="font-bold text-slate-700">Filter Status:</label>
           <select
             value={status}
             onChange={(e) => {
               setStatus(e.target.value)
               setPage(1)
             }}
-            className="input-field"
+            className="input-field !py-1.5 text-xs"
           >
-            <option value="">All</option>
-            <option value="pending">Pending</option>
-            <option value="processing">Processing</option>
-            <option value="completed">Completed</option>
-            <option value="error">Error</option>
+            <option value="">All Statuses</option>
+            <option value="COMPLETED">Completed</option>
+            <option value="PROCESSING">Processing</option>
+            <option value="PENDING">Pending</option>
+            <option value="ERROR">Error</option>
           </select>
-          <span className="text-sm text-gray-500">
-            Total: {data?.total || 0} journals
-          </span>
         </div>
+        <span className="text-xs text-slate-500 font-semibold">
+          Total: {data?.total || 0} Journals
+        </span>
       </div>
       
       {/* Journals Table */}
-      <div className="table-container">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Journal No.
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Publication Date
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                PDFs
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Trademarks
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Status
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Actions
-              </th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {journals.map((journal, index) => (
-              <motion.tr 
-                key={journal.id} 
-                className="hover:bg-gray-50 transition-colors"
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: index * 0.05, duration: 0.3 }}
-                whileHover={{ scale: 1.01 }}>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm font-medium text-gray-900">
-                    {journal.journal_number}
-                  </div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-500">
-                    {format(new Date(journal.publication_date), 'dd MMM yyyy')}
-                  </div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-900">{journal.pdf_count}</div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-900">
-                    {journal.total_trademarks?.toLocaleString() || 0}
-                  </div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <span className={getStatusBadge(journal.status)}>
-                    {journal.status}
-                  </span>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm">
-                  <div className="flex items-center space-x-3">
-                    <Link
-                      to={`/journals/${journal.id}`}
-                      className="text-primary-600 hover:text-primary-900 flex items-center space-x-1"
-                    >
-                      <Eye className="h-4 w-4" />
-                      <span>View</span>
-                    </Link>
-                    <button
-                      onClick={() => handleDelete(journal)}
-                      disabled={deleteMutation.isPending}
-                      className="text-red-600 hover:text-red-900 flex items-center space-x-1 disabled:opacity-50"
-                      title="Delete journal and all data"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                      <span>Delete</span>
-                    </button>
-                  </div>
-                </td>
-              </motion.tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="card !p-0 overflow-hidden border border-slate-200 shadow-card">
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-slate-200">
+            <thead className="bg-slate-50/80">
+              <tr>
+                <th className="px-6 py-3.5 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">
+                  Journal Number
+                </th>
+                <th className="px-6 py-3.5 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">
+                  Publication Date
+                </th>
+                <th className="px-6 py-3.5 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">
+                  PDF Parts
+                </th>
+                <th className="px-6 py-3.5 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">
+                  Trademarks
+                </th>
+                <th className="px-6 py-3.5 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">
+                  Status
+                </th>
+                <th className="px-6 py-3.5 text-right text-xs font-bold text-slate-600 uppercase tracking-wider">
+                  Actions
+                </th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-slate-100">
+              {journals.map((journal) => (
+                <tr 
+                  key={journal.id} 
+                  className="hover:bg-slate-50/80 transition-colors"
+                >
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <div className="flex items-center space-x-2">
+                      <BookOpen className="h-4 w-4 text-primary-600" />
+                      <span className="text-sm font-extrabold text-slate-900">
+                        #{journal.journal_number}
+                      </span>
+                    </div>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-xs font-semibold text-slate-700">
+                    {journal.publication_date ? format(new Date(journal.publication_date), 'dd MMM yyyy') : '—'}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-xs font-bold text-slate-800">
+                    {journal.pdf_count} Parts
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-xs font-extrabold text-emerald-600">
+                    {(journal.total_trademarks || 0).toLocaleString()}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <span className={
+                      journal.status === 'COMPLETED' ? 'badge badge-success' :
+                      journal.status === 'PROCESSING' ? 'badge badge-warning' :
+                      journal.status === 'ERROR' ? 'badge badge-error' : 'badge badge-info'
+                    }>
+                      {journal.status}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-right text-xs">
+                    <div className="flex items-center justify-end space-x-2">
+                      <Link
+                        to={`/journals/${journal.id}`}
+                        className="btn-secondary !py-1.5 !px-3 !text-xs flex items-center space-x-1"
+                      >
+                        <span>View</span>
+                        <ArrowUpRight className="h-3.5 w-3.5" />
+                      </Link>
+                      <button
+                        onClick={() => handleDelete(journal)}
+                        disabled={deleteMutation.isPending}
+                        className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                        title="Delete journal"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
       
       {journals.length === 0 && (
-        <div className="text-center py-12">
-          <p className="text-gray-500">No journals found</p>
+        <div className="card text-center py-12">
+          <p className="text-xs text-slate-500 font-medium">No journals recorded in the database.</p>
         </div>
       )}
       

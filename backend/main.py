@@ -18,24 +18,24 @@ async def lifespan(app: FastAPI):
     Startup and shutdown events
     """
     # Startup
-    print("🚀 Starting Trademark Journal Scraper API...")
+    print("[+] Starting Trademark Journal Scraper API...")
     
     # Create database tables
     Base.metadata.create_all(bind=engine)
-    print("✅ Database tables created/verified")
+    print("[+] Database tables created/verified")
     
     # Start scheduler if enabled
     if settings.SCRAPER_SCHEDULE_ENABLED:
         start_scheduler()
-        print(f"⏰ Scheduler started - runs every {settings.SCRAPER_SCHEDULE_DAY} at {settings.SCRAPER_SCHEDULE_HOUR}:{settings.SCRAPER_SCHEDULE_MINUTE:02d}")
+        print(f"[+] Scheduler started - runs every {settings.SCRAPER_SCHEDULE_DAY} at {settings.SCRAPER_SCHEDULE_HOUR}:{settings.SCRAPER_SCHEDULE_MINUTE:02d}")
     
     yield
     
     # Shutdown
-    print("🛑 Shutting down...")
+    print("[-] Shutting down...")
     if settings.SCRAPER_SCHEDULE_ENABLED:
         stop_scheduler()
-        print("⏰ Scheduler stopped")
+        print("[-] Scheduler stopped")
 
 
 # Create FastAPI app

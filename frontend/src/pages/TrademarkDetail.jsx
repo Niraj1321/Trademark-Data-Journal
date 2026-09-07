@@ -27,61 +27,73 @@ export default function TrademarkDetail() {
       </Link>
       
       {/* Header */}
-      <div className="card bg-primary-50 border border-primary-200">
-        <h1 className="text-3xl font-bold text-gray-900 mb-4">
-          {tm.trademark_name || 'Trademark Application'}
-        </h1>
-        <div className="flex flex-wrap gap-2">
-          {tm.class_number && (
-            <span className="badge badge-info">Class {tm.class_number}</span>
-          )}
-          {tm.office_location && (
-            <span className="badge">{tm.office_location}</span>
-          )}
-          {tm.applicant_type && (
-            <span className="badge">{tm.applicant_type}</span>
-          )}
+      <div className="card bg-gradient-to-r from-slate-900 to-slate-800 text-white border-0 shadow-xl">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-extrabold text-white mb-2">
+              {tm.trademark_name || 'Trademark Application'}
+            </h1>
+            <div className="flex flex-wrap items-center gap-2">
+              {tm.class_number && (
+                <span className="badge badge-info text-xs font-bold">Class {tm.class_number}</span>
+              )}
+              {tm.office_location && (
+                <span className="badge badge-warning text-xs font-bold">{tm.office_location}</span>
+              )}
+              {tm.applicant_type && (
+                <span className="badge bg-slate-700 text-slate-200 border-slate-600 text-xs font-semibold">{tm.applicant_type}</span>
+              )}
+            </div>
+          </div>
+
+          {/* Publication Tag Box */}
+          <div className="p-3.5 bg-slate-800/80 rounded-2xl border border-slate-700 text-right">
+            <span className="text-[11px] uppercase tracking-wider text-slate-400 font-bold block">Official Publication</span>
+            <span className="text-sm font-bold text-primary-400">
+              {tm.publication_date ? format(new Date(tm.publication_date), 'dd MMMM yyyy') : 'Official Gazette'}
+            </span>
+            {tm.journal_number && (
+              <span className="text-xs text-slate-400 block mt-0.5 font-medium">Journal #{tm.journal_number}</span>
+            )}
+          </div>
         </div>
       </div>
       
       {/* Application Details */}
       <div className="card">
-        <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center space-x-2">
-          <FileText className="h-5 w-5" />
-          <span>Application Details</span>
+        <h2 className="text-base font-bold text-slate-900 mb-4 flex items-center space-x-2 border-b border-slate-100 pb-3">
+          <FileText className="h-4 w-4 text-primary-600" />
+          <span>Application & Registration Metadata</span>
         </h2>
         
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {tm.application_number && (
-            <div>
-              <p className="text-sm text-gray-500 mb-1">Application Number</p>
-              <p className="text-base font-medium text-gray-900">{tm.application_number}</p>
+            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/70">
+              <p className="text-[11px] font-bold text-slate-500 uppercase">Application Number</p>
+              <p className="text-sm font-extrabold text-slate-900 mt-1">{tm.application_number}</p>
             </div>
           )}
           
           {tm.filing_date && (
-            <div>
-              <p className="text-sm text-gray-500 mb-1 flex items-center space-x-1">
-                <Calendar className="h-4 w-4" />
-                <span>Filing Date</span>
-              </p>
-              <p className="text-base font-medium text-gray-900">
+            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/70">
+              <p className="text-[11px] font-bold text-slate-500 uppercase">Filing Date</p>
+              <p className="text-sm font-bold text-slate-900 mt-1">
                 {format(new Date(tm.filing_date), 'dd MMMM yyyy')}
               </p>
             </div>
           )}
+
+          <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/70">
+            <p className="text-[11px] font-bold text-slate-500 uppercase">Publication Date</p>
+            <p className="text-sm font-bold text-primary-700 mt-1">
+              {tm.publication_date ? format(new Date(tm.publication_date), 'dd MMMM yyyy') : 'N/A'}
+            </p>
+          </div>
           
           {tm.used_since && (
-            <div>
-              <p className="text-sm text-gray-500 mb-1">Used Since</p>
-              <p className="text-base font-medium text-gray-900">{tm.used_since}</p>
-            </div>
-          )}
-          
-          {tm.associated_with && (
-            <div>
-              <p className="text-sm text-gray-500 mb-1">Associated With</p>
-              <p className="text-base font-medium text-gray-900">{tm.associated_with}</p>
+            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/70">
+              <p className="text-[11px] font-bold text-slate-500 uppercase">Used Since</p>
+              <p className="text-sm font-bold text-slate-900 mt-1">{tm.used_since}</p>
             </div>
           )}
         </div>

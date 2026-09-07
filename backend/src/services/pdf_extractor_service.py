@@ -1,31 +1,52 @@
 """
-PDF extraction service for trademark data
+PDF extraction service for trademark data (High-Speed PyMuPDF Edition)
 """
 import re
+import time
 from pathlib import Path
 from datetime import datetime
-from typing import List, Dict, Optional
-import pdfplumber
+from typing import List, Dict, Optional, Callable
 from sqlalchemy.orm import Session
 
-from ..models.models import PDFFile, TrademarkApplication, ExtractionStatus
+# High-speed PDF parser
+try:
+    import pymupdf as fitz  # PyMuPDF (100x faster than pdfplumber)
+    HAVE_FITZ = True
+except ImportError:
+    try:
+        import fitz
+        HAVE_FITZ = True
+    except ImportError:
+        HAVE_FITZ = False
+        import pdfplumber
+
+from ..models.models import PDFFile, TrademarkApplication, ExtractionStatus, Journal
 from ..config.settings import settings
 
 
 class PDFExtractor:
     """
-    Extracts trademark application data from PDF files
+    Extracts trademark application data from PDF files using ultra-fast C++ PyMuPDF engine
     """
     
     def __init__(self, db: Session):
         self.db = db
     
-    def extract_pdf(self, pdf_file: PDFFile) -> int:
+    def extract_pdf(
+        self, 
+        pdf_file: PDFFile, 
+        progress_callback: Optional[Callable[[Dict], None]] = None,
+        file_index: int = 1,
+        total_files: int = 1
+    ) -> int:
         """
         Extract trademark applications from a PDF file
         
         Args:
             pdf_file: PDFFile object to extract
+            progress_callback: Optional callback for UI progress
+            file_index: Current file index
+            total_files: Total files to extract
         
         Returns:
             Number of records extracted
@@ -34,225 +55,282 @@ class PDFExtractor:
             pdf_file.extraction_status = ExtractionStatus.PROCESSING
             self.db.commit()
             
-            print(f"📖 Extracting data from {pdf_file.file_name}...")
+            t0 = time.time()
             
-            # Open and process PDF
-            records = self._process_pdf(pdf_file)
+            # Fast text extraction & parsing
+            records, total_pages = self._process_pdf_fast(pdf_file)
             
-            # Save records to database
+            # Save records to database in fast batches
             records_saved = 0
-            for record in records:
-                try:
-                    trademark = TrademarkApplication(
+            if records:
+                # Prepare ORM objects
+                tm_objects = [
+                    TrademarkApplication(
                         pdf_file_id=pdf_file.id,
                         journal_id=pdf_file.journal_id,
                         **record
                     )
-                    self.db.add(trademark)
-                    records_saved += 1
-                except Exception as e:
-                    print(f"  ⚠️  Error saving record: {str(e)}")
-                    continue
-            
-            self.db.commit()
+                    for record in records
+                ]
+                
+                # Batch commit in chunks of 500
+                chunk_size = 500
+                for i in range(0, len(tm_objects), chunk_size):
+                    chunk = tm_objects[i:i + chunk_size]
+                    try:
+                        self.db.bulk_save_objects(chunk)
+                        self.db.commit()
+                        records_saved += len(chunk)
+                    except Exception:
+                        self.db.rollback()
+                        # Fallback item-by-item if batch had duplicate/issue
+                        for item in chunk:
+                            try:
+                                self.db.add(item)
+                                self.db.commit()
+                                records_saved += 1
+                            except Exception:
+                                self.db.rollback()
             
             # Update PDF file status
-            pdf_file.extraction_status = ExtractionStatus.COMPLETED
-            pdf_file.extraction_date = datetime.utcnow()
-            pdf_file.records_extracted = records_saved
-            self.db.commit()
+            p = self.db.query(PDFFile).filter(PDFFile.id == pdf_file.id).first()
+            if p:
+                p.extraction_status = ExtractionStatus.COMPLETED
+                p.extraction_date = datetime.utcnow()
+                p.records_extracted = records_saved
+                p.error_message = None
+                self.db.commit()
             
-            print(f"✅ Extracted {records_saved} records from {pdf_file.file_name}")
+            elapsed = time.time() - t0
+            pages_per_sec = total_pages / max(0.01, elapsed)
+            
+            print(f"   ↳ [{file_index}/{total_files}] {pdf_file.file_name} ({total_pages} pgs): {records_saved} TMs in {elapsed:.2f}s ({pages_per_sec:.0f} pgs/s) ✓")
+            
+            if progress_callback:
+                progress_callback({
+                    "step": "extract_file_done",
+                    "file_name": pdf_file.file_name,
+                    "index": file_index,
+                    "total_files": total_files,
+                    "pages": total_pages,
+                    "records": records_saved,
+                    "elapsed": round(elapsed, 2),
+                    "message": f"Extracted {records_saved} trademarks from {pdf_file.file_name} ({total_pages} pages)"
+                })
+                
             return records_saved
             
         except Exception as e:
-            pdf_file.extraction_status = ExtractionStatus.ERROR
-            pdf_file.error_message = str(e)
-            self.db.commit()
-            print(f"❌ Error extracting {pdf_file.file_name}: {str(e)}")
+            self.db.rollback()
+            try:
+                p = self.db.query(PDFFile).filter(PDFFile.id == pdf_file.id).first()
+                if p:
+                    p.extraction_status = ExtractionStatus.ERROR
+                    p.error_message = str(e)
+                    self.db.commit()
+            except Exception:
+                pass
+            print(f"   ↳ [ERROR] Failed extracting {pdf_file.file_name}: {str(e)}")
             return 0
     
-    def _process_pdf(self, pdf_file: PDFFile) -> List[Dict]:
+    def _process_pdf_fast(self, pdf_file: PDFFile) -> tuple[List[Dict], int]:
         """
-        Process PDF and extract trademark records
+        Process PDF and extract trademark records using PyMuPDF (fitz) or fallback
         """
         records = []
+        file_path = pdf_file.file_path
         
-        with pdfplumber.open(pdf_file.file_path) as pdf:
-            current_record = {}
-            current_text = []
-            page_num = 0
+        if not file_path or not Path(file_path).exists():
+            return records, 0
             
-            for page in pdf.pages:
-                page_num += 1
-                text = page.extract_text()
+        if HAVE_FITZ:
+            try:
+                doc = fitz.open(file_path)
+                total_pages = len(doc)
                 
-                if not text:
-                    continue
-                
-                # Split into lines
-                lines = text.split('\n')
-                
-                # Process each line
-                for line in lines:
-                    line = line.strip()
-                    
-                    if not line:
+                for page_num in range(1, total_pages + 1):
+                    try:
+                        page = doc.load_page(page_num - 1)
+                        text = page.get_text()
+                        if not text:
+                            continue
+                        
+                        record = self._parse_page_text(text, page_num)
+                        if record:
+                            records.append(record)
+                    except Exception:
                         continue
-                    
-                    # Check for new trademark entry (application number pattern)
-                    app_num_match = re.match(r'^(\d{7,10})\s+(\d{2}/\d{2}/\d{4})', line)
-                    
-                    if app_num_match:
-                        # Save previous record if exists
-                        if current_record and current_text:
-                            current_record['raw_text'] = '\n'.join(current_text)
-                            records.append(current_record.copy())
-                        
-                        # Start new record
-                        current_record = {
-                            'application_number': app_num_match.group(1),
-                            'filing_date': self._parse_date(app_num_match.group(2)),
-                            'page_number': page_num
-                        }
-                        current_text = [line]
-                    else:
-                        # Accumulate text for current record
-                        current_text.append(line)
-                        
-                        # Extract specific fields
-                        self._extract_fields(line, current_record, current_text)
-            
-            # Save last record
-            if current_record and current_text:
-                current_record['raw_text'] = '\n'.join(current_text)
-                records.append(current_record)
+                doc.close()
+                return records, total_pages
+            except Exception as e:
+                print(f"[WARN] PyMuPDF could not read {file_path}: {e}")
+                records = []
+                total_pages = 0
         
-        # Post-process records
-        for record in records:
-            self._post_process_record(record)
-        
-        return records
+        # Fallback to pdfplumber
+        try:
+            with pdfplumber.open(file_path) as pdf:
+                total_pages = len(pdf.pages)
+                for page_num in range(1, total_pages + 1):
+                    try:
+                        page = pdf.pages[page_num - 1]
+                        text = page.extract_text()
+                        if not text:
+                            continue
+                        record = self._parse_page_text(text, page_num)
+                        if record:
+                            records.append(record)
+                    except Exception:
+                        continue
+            return records, total_pages
+        except Exception as e:
+            print(f"[ERROR] pdfplumber fallback failed on {file_path}: {e}")
+            return records, total_pages
     
-    def _extract_fields(self, line: str, record: Dict, text_lines: List[str]):
+    def _parse_page_text(self, text: str, page_num: int) -> Optional[Dict]:
         """
-        Extract specific fields from text lines
+        Parse text of a single page to extract trademark application details
         """
-        # Applicant name (usually after application number)
-        if 'applicant_name' not in record and len(text_lines) >= 3:
-            # Usually line 2 is the applicant name
-            if len(text_lines) == 3:
-                record['applicant_name'] = text_lines[2]
+        if not text:
+            return None
+            
+        lines = [l.strip() for l in text.split('\n') if l.strip()]
+        if not lines:
+            return None
+            
+        # Check for application number pattern: 7-10 digits followed by DD/MM/YYYY
+        app_idx = -1
+        app_match = None
+        for idx, line in enumerate(lines):
+            m = re.search(r'(\b\d{7,10}\b)\s+(\d{2}/\d{2}/\d{4})', line)
+            if m:
+                app_idx = idx
+                app_match = m
+                break
+                
+        if not app_match:
+            return None
+            
+        app_num = app_match.group(1)
+        filing_date = self._parse_date(app_match.group(2))
         
         # Class number
-        class_match = re.search(r'Class\s+(\d+)', line, re.IGNORECASE)
-        if class_match:
-            record['class_number'] = int(class_match.group(1))
+        class_num = None
+        header_class = re.search(r'Class\s+(\d+)', lines[0], re.IGNORECASE)
+        if header_class:
+            class_num = int(header_class.group(1))
+            
+        # Trademark Word Mark (if present before application number)
+        trademark_name = None
+        if app_idx > 1:
+            tm_lines = lines[1:app_idx]
+            trademark_name = " ".join(tm_lines).strip()
+            
+        after_lines = lines[app_idx + 1:]
+        applicant_name = None
+        applicant_address = []
+        applicant_type = None
+        attorney_name = None
+        attorney_address = []
+        used_since = None
+        office_location = None
+        goods_services = []
         
-        # Office location
-        office_match = re.search(r'(MUMBAI|DELHI|KOLKATA|CHENNAI|AHMEDABAD)', line, re.IGNORECASE)
-        if office_match:
-            record['office_location'] = office_match.group(1).upper()
+        state = "APPLICANT"
+        type_keywords = [
+            'INDIVIDUAL', 'PARTNERSHIP', 'PRIVATE LIMITED', 'LIMITED COMPANY', 
+            'LLP', 'PROPRIETORSHIP', 'BODY INCORPORATE', 'HUF', 'SOLE PROPRIETOR',
+            'PARTNERSHIP FIRM', 'COMPANY', 'SOCIETY', 'TRUST'
+        ]
+        cities = ['MUMBAI', 'DELHI', 'KOLKATA', 'CHENNAI', 'AHMEDABAD']
         
-        # Applicant type
-        type_keywords = ['INDIVIDUAL', 'PARTNERSHIP', 'PRIVATE LIMITED', 'LIMITED COMPANY', 
-                        'LLP', 'PROPRIETORSHIP', 'BODY INCORPORATE', 'HUF']
-        for keyword in type_keywords:
-            if keyword in line.upper():
-                record['applicant_type'] = keyword
-                break
-        
-        # Used since
-        used_match = re.search(r'Used Since\s*:?\s*(\d{2}/\d{2}/\d{4})', line, re.IGNORECASE)
-        if used_match:
-            record['used_since'] = used_match.group(1)
-        
-        # Associated with
-        assoc_match = re.search(r'To be associated with\s*:?\s*(\d+)', line, re.IGNORECASE)
-        if assoc_match:
-            record['associated_with'] = assoc_match.group(1)
-        
-        # Attorney/Agent address
-        if 'Address for service' in line or 'Attorney address' in line or 'Agents address' in line:
-            record['_in_attorney_section'] = True
-        
-        if record.get('_in_attorney_section') and 'attorney_address' not in record:
-            if not any(keyword in line for keyword in ['Address for service', 'Attorney', 'Proposed', 'Used Since']):
-                if 'attorney_address' not in record:
-                    record['attorney_address'] = line
+        for line in after_lines:
+            if re.match(r'^\d+$', line):
+                continue
+                
+            if re.search(r'Address for service in India/(Attorney|Agents)\s*address:', line, re.IGNORECASE):
+                state = "ATTORNEY"
+                continue
+                
+            used_m = re.search(r'Used Since\s*:?\s*(\d{2}/\d{2}/\d{4})', line, re.IGNORECASE)
+            if used_m:
+                used_since = used_m.group(1)
+                state = "OFFICE"
+                continue
+            elif 'Proposed to be Used' in line or 'Proposed to be used' in line:
+                used_since = 'Proposed to be used'
+                state = "OFFICE"
+                continue
+                
+            if line.upper() in cities:
+                office_location = line.upper()
+                state = "GOODS"
+                continue
+                
+            if state == "APPLICANT":
+                if not applicant_name:
+                    applicant_name = line
                 else:
-                    record['attorney_address'] += ' ' + line
-    
-    def _post_process_record(self, record: Dict):
-        """
-        Post-process extracted record
-        """
-        # Extract goods and services (everything after address until next section)
-        raw_text = record.get('raw_text', '')
-        lines = raw_text.split('\n')
-        
-        # Find applicant address (multi-line)
-        applicant_lines = []
-        goods_lines = []
-        in_goods = False
-        
-        for i, line in enumerate(lines):
-            # Skip first few lines (app number, date, name)
-            if i < 3:
-                continue
-            
-            # Check for section markers
-            if any(marker in line for marker in ['Address for service', 'Proposed to be Used', 'MUMBAI', 'DELHI', 'CHENNAI', 'KOLKATA', 'AHMEDABAD']):
-                in_goods = True
-                if any(city in line for city in ['MUMBAI', 'DELHI', 'CHENNAI', 'KOLKATA', 'AHMEDABAD']):
-                    record['office_location'] = line.strip()
-                continue
-            
-            # Collect applicant address lines
-            if not in_goods and line.strip() and len(applicant_lines) < 5:
-                # Skip if it's a class line or other metadata
-                if not re.match(r'^(Class|Individual|Partnership|Private|Limited|LLP|Used Since)', line, re.IGNORECASE):
-                    applicant_lines.append(line.strip())
-            
-            # Collect goods/services lines
-            if in_goods and line.strip():
-                # Stop at certain markers
-                if any(marker in line for marker in ['Associated with', 'Mark can be', 'Registration of', 'THIS IS CONDITION']):
-                    break
-                goods_lines.append(line.strip())
-        
-        # Set applicant address (first 1-2 lines after name)
-        if applicant_lines and 'applicant_address' not in record:
-            record['applicant_address'] = ', '.join(applicant_lines[:3])
-        
-        # Set goods and services
-        if goods_lines:
-            record['goods_services'] = ' '.join(goods_lines[:10])  # Limit length
-        
-        # Extract trademark name from raw text if not found
-        if 'trademark_name' not in record:
-            # Look for a prominent text/name (usually in first 10 lines)
-            for line in lines[2:8]:
-                if line.strip() and len(line) > 3 and not re.match(r'^\d', line):
-                    # Check if it's not an address or other metadata
-                    if not any(word in line.lower() for word in ['address', 'service', 'mumbai', 'delhi', 'road', 'floor']):
-                        record['trademark_name'] = line.strip()
+                    is_type = False
+                    for kw in type_keywords:
+                        if kw in line.upper():
+                            applicant_type = line
+                            is_type = True
+                            break
+                    if not is_type:
+                        applicant_address.append(line)
+                        
+            elif state == "ATTORNEY":
+                if not attorney_name:
+                    attorney_name = line
+                else:
+                    attorney_address.append(line)
+                    
+            elif state == "OFFICE":
+                found_city = False
+                for c in cities:
+                    if c in line.upper():
+                        office_location = c
+                        found_city = True
                         break
-        
-        # Clean up temporary fields
-        if '_in_attorney_section' in record:
-            del record['_in_attorney_section']
+                state = "GOODS"
+                if not found_city:
+                    goods_services.append(line)
+                    
+            elif state == "GOODS":
+                if not line.startswith("IT IS A CONDITION") and not line.startswith("THIS IS SUBJECT TO"):
+                    goods_services.append(line)
+                    
+        return {
+            "application_number": app_num,
+            "filing_date": filing_date,
+            "trademark_name": trademark_name or applicant_name or f"TM-{app_num}",
+            "applicant_name": applicant_name or "Unknown",
+            "applicant_address": ", ".join(applicant_address) if applicant_address else None,
+            "applicant_type": applicant_type,
+            "class_number": class_num,
+            "attorney_name": attorney_name,
+            "attorney_address": ", ".join(attorney_address) if attorney_address else None,
+            "used_since": used_since,
+            "office_location": office_location,
+            "goods_services": " ".join(goods_services) if goods_services else None,
+            "page_number": page_num,
+            "raw_text": text[:3000]
+        }
     
     def _parse_date(self, date_str: str) -> Optional[datetime]:
         """
         Parse date string in DD/MM/YYYY format
         """
         try:
-            return datetime.strptime(date_str, "%d/%m/%Y").date()
-        except:
+            return datetime.strptime(date_str.strip(), "%d/%m/%Y").date()
+        except Exception:
             return None
     
-    def extract_all_pending(self) -> Dict[str, int]:
+    def extract_all_pending(
+        self,
+        progress_callback: Optional[Callable[[Dict], None]] = None
+    ) -> Dict[str, int]:
         """
         Extract all PDFs with pending status
         
@@ -263,25 +341,51 @@ class PDFExtractor:
             PDFFile.extraction_status == ExtractionStatus.PENDING
         ).all()
         
+        total_pending = len(pending_pdfs)
+        print(f"\n========================================================")
+        print(f" [3/3] ⚡ Fast-Extracting Trademarks from {total_pending} PDFs...")
+        print(f"========================================================")
+        
+        if progress_callback:
+            progress_callback({
+                "step": "extract_start",
+                "pending_pdfs": total_pending,
+                "message": f"Starting fast extraction across {total_pending} pending PDFs..."
+            })
+            
         stats = {
-            'total_pdfs': len(pending_pdfs),
+            'total_pdfs': total_pending,
             'processed': 0,
             'records': 0,
             'errors': 0
         }
         
-        for pdf_file in pending_pdfs:
-            records = self.extract_pdf(pdf_file)
+        t0 = time.time()
+        for idx, pdf_file in enumerate(pending_pdfs, 1):
+            records = self.extract_pdf(pdf_file, progress_callback, idx, total_pending)
             if records > 0:
                 stats['processed'] += 1
                 stats['records'] += records
             else:
                 stats['errors'] += 1
+                
+        total_time = time.time() - t0
+        print(f"\n[✓] Fast Extraction Complete: {stats['records']:,} trademarks extracted from {stats['processed']}/{total_pending} PDFs in {total_time:.1f}s")
         
+        if progress_callback:
+            progress_callback({
+                "step": "extract_complete",
+                "records": stats['records'],
+                "processed": stats['processed'],
+                "total": total_pending,
+                "total_time": round(total_time, 1),
+                "message": f"Extracted {stats['records']} trademarks from {stats['processed']} PDFs in {total_time:.1f}s"
+            })
+            
         return {
             'pdfs_total': stats['total_pdfs'],
             'pdfs_processed': stats['processed'],
             'records': stats['records'],
             'errors': stats['errors']
         }
-        return stats
+

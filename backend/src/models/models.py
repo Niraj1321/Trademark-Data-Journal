@@ -106,6 +106,18 @@ class TrademarkApplication(Base):
     pdf_file = relationship("PDFFile", back_populates="trademarks")
     journal = relationship("Journal", back_populates="trademarks")
 
+    @property
+    def publication_date(self):
+        return self.journal.publication_date if self.journal else None
+
+    @property
+    def journal_number(self):
+        return self.journal.journal_number if self.journal else None
+
+    @property
+    def class_range(self):
+        return self.pdf_file.class_range if self.pdf_file else None
+
 
 class ScraperLog(Base):
     __tablename__ = "scraper_logs"

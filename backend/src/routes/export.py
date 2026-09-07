@@ -51,6 +51,7 @@ async def export_by_journal(
 async def export_all_trademarks(
     journal_number: Optional[str] = None,
     class_number: Optional[int] = None,
+    application_number: Optional[str] = None,
     office_location: Optional[str] = None,
     search: Optional[str] = None,
     db: Session = Depends(get_db)
@@ -60,7 +61,8 @@ async def export_all_trademarks(
     
     Query params:
     - journal_number: Filter by journal number
-    - class_number: Filter by class (1-45)
+    - class_number: Filter by class (1-99)
+    - application_number: Filter by application number
     - office_location: Filter by office (MUMBAI, DELHI, etc.)
     - search: Search in trademark name or applicant name
     """
@@ -72,6 +74,8 @@ async def export_all_trademarks(
         filters['journal_number'] = journal_number
     if class_number:
         filters['class_number'] = class_number
+    if application_number:
+        filters['application_number'] = application_number
     if office_location:
         filters['office_location'] = office_location
     if search:

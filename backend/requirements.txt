@@ -25,6 +25,7 @@ pandas>=2.3.3
 apscheduler>=3.10.4
 
 # HTTP Client
+requests>=2.31.0
 httpx>=0.25.2
 aiofiles>=23.2.1
 
