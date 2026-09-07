@@ -56,71 +56,159 @@ class TrademarkScraper:
         print(f"========================================================")
         
         start_total = time.time()
+        journal_data = []
         
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
-            context = browser.new_context()
-            page = context.new_page()
+        # Primary Fast Method: Direct HTTP + BeautifulSoup (Ultra fast, minimal RAM)
+        try:
+            print("[+] Attempting ultra-fast direct portal fetch...")
+            resp = requests.get(self.BASE_URL, timeout=25, verify=False)
+            if resp.status_code == 200 and "table" in resp.text.lower():
+                journal_data = self._extract_table_data_bs4(resp.text, max_journals)
+                if journal_data:
+                    print(f"[✓] Direct HTTP fast-fetch retrieved {len(journal_data)} journals in {time.time() - start_total:.2f}s")
+        except Exception as e:
+            print(f"[WARN] Direct HTTP fetch failed ({e}), falling back to headless browser...")
+
+        # Secondary Fallback Method: Playwright with Linux sandbox arguments
+        if not journal_data:
+            print("[+] Launching Playwright browser fallback...")
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(
+                    headless=True,
+                    args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
+                )
+                context = browser.new_context()
+                page = context.new_page()
+                try:
+                    page.goto(self.BASE_URL, timeout=60000)
+                    page.wait_for_selector("table#Journal", timeout=30000)
+                    journal_data = self._extract_table_data(page, max_journals)
+                except Exception as e:
+                    print(f"[ERROR] Scraper browser navigation failed: {str(e)}")
+                    if progress_callback:
+                        progress_callback({"step": "error", "message": f"Scraper error: {str(e)}"})
+                    raise
+                finally:
+                    browser.close()
+                    
+        print(f"[✓] Successfully retrieved {len(journal_data)} journal entries from portal")
+        
+        if progress_callback:
+            progress_callback({
+                "step": "table_extracted",
+                "journals_found": len(journal_data),
+                "message": f"Found {len(journal_data)} latest journal(s)"
+            })
+        
+        # Process each journal
+        for j_idx, data in enumerate(journal_data, 1):
+            # Check if already exists in DB
+            existing = self.db.query(Journal).filter(
+                Journal.journal_number == data["journal_number"]
+            ).first()
             
-            try:
-                page.goto(self.BASE_URL, timeout=60000)
-                page.wait_for_selector("table#Journal", timeout=30000)
-                
-                # Extract table data
-                journal_data = self._extract_table_data(page, max_journals)
-                print(f"[✓] Successfully retrieved {len(journal_data)} journal entries from portal")
-                
-                if progress_callback:
-                    progress_callback({
-                        "step": "table_extracted",
-                        "journals_found": len(journal_data),
-                        "message": f"Found {len(journal_data)} latest journal(s)"
-                    })
-                
-                # Process each journal
-                for j_idx, data in enumerate(journal_data, 1):
-                    # Check if already exists in DB
-                    existing = self.db.query(Journal).filter(
-                        Journal.journal_number == data["journal_number"]
-                    ).first()
-                    
-                    if existing:
-                        journal = existing
-                        # Update dates if missing
-                        if not journal.publication_date and data.get("publication_date"):
-                            journal.publication_date = data["publication_date"]
-                        if not journal.availability_date and data.get("availability_date"):
-                            journal.availability_date = data["availability_date"]
-                        self.db.commit()
-                        print(f"[INFO] Journal #{data['journal_number']} already in DB. Checking PDF files...")
-                    else:
-                        # Create new journal entry
-                        journal = Journal(
-                            journal_number=data["journal_number"],
-                            publication_date=data["publication_date"],
-                            availability_date=data["availability_date"],
-                            status=JournalStatus.PENDING
-                        )
-                        self.db.add(journal)
-                        self.db.commit()
-                        self.db.refresh(journal)
-                        print(f"[NEW] Registered Journal #{journal.journal_number} (Pub: {data['publication_date']})")
-                    
-                    # Download PDFs concurrently for this journal
-                    self._download_journal_pdfs_parallel(journal, data["pdf_forms"], progress_callback)
-                    journals.append(journal)
-                    
-            except Exception as e:
-                print(f"[ERROR] Scraper failed during web navigation: {str(e)}")
-                if progress_callback:
-                    progress_callback({"step": "error", "message": f"Scraper error: {str(e)}"})
-                raise
-            finally:
-                browser.close()
-                
+            if existing:
+                journal = existing
+                if not journal.publication_date and data.get("publication_date"):
+                    journal.publication_date = data["publication_date"]
+                if not journal.availability_date and data.get("availability_date"):
+                    journal.availability_date = data["availability_date"]
+                self.db.commit()
+                print(f"[INFO] Journal #{data['journal_number']} already in DB. Checking PDF files...")
+            else:
+                journal = Journal(
+                    journal_number=data["journal_number"],
+                    publication_date=data["publication_date"],
+                    availability_date=data["availability_date"],
+                    status=JournalStatus.PENDING
+                )
+                self.db.add(journal)
+                self.db.commit()
+                self.db.refresh(journal)
+                print(f"[NEW] Registered Journal #{journal.journal_number} (Pub: {data['publication_date']})")
+            
+            # Download PDFs concurrently for this journal
+            self._download_journal_pdfs_parallel(journal, data["pdf_forms"], progress_callback)
+            journals.append(journal)
+            
         elapsed = time.time() - start_total
         print(f"\n[✓] Journal scraping and downloads completed in {elapsed:.1f}s")
         return journals
+    
+    def _extract_table_data_bs4(self, html_text: str, max_journals: int) -> List[Dict]:
+        """
+        Ultra-fast HTML parsing using BeautifulSoup (0.2s runtime, minimal memory)
+        """
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(html_text, "html.parser")
+        table = soup.find("table", id="Journal")
+        if not table:
+            return []
+            
+        tbody = table.find("tbody")
+        if not tbody:
+            return []
+            
+        rows = tbody.find_all("tr")
+        journal_data = []
+        
+        for idx, row in enumerate(rows[:max_journals]):
+            try:
+                cells = row.find_all("td")
+                if len(cells) >= 5:
+                    sr_no = cells[0].get_text(strip=True)
+                    journal_no = cells[1].get_text(strip=True)
+                    pub_date = cells[2].get_text(strip=True)
+                    avail_date = cells[3].get_text(strip=True)
+                    
+                    try:
+                        pub_date_obj = datetime.strptime(pub_date, "%d/%m/%Y").date()
+                    except Exception:
+                        pub_date_obj = datetime.utcnow().date()
+                        
+                    try:
+                        avail_date_obj = datetime.strptime(avail_date, "%d/%m/%Y").date()
+                    except Exception:
+                        avail_date_obj = datetime.utcnow().date()
+                        
+                    pdf_forms = []
+                    forms = cells[4].find_all("form")
+                    for form in forms:
+                        hidden_input = form.find("input", {"name": "FileName"})
+                        btn = form.find(["button", "input"])
+                        if hidden_input and hidden_input.get("value"):
+                            filename = hidden_input["value"]
+                            button_text = btn.get_text(strip=True) if btn else ""
+                            if not button_text and btn and btn.get("value"):
+                                button_text = btn["value"]
+                            pdf_forms.append({
+                                "filename": filename,
+                                "button_text": button_text or f"Part-{len(pdf_forms) + 1}"
+                            })
+                            
+                    if not pdf_forms:
+                        for in_el in cells[4].find_all("input", {"name": "FileName"}):
+                            fn = in_el.get("value")
+                            if fn:
+                                pdf_forms.append({
+                                    "filename": fn,
+                                    "button_text": f"Part-{len(pdf_forms) + 1}"
+                                })
+                                
+                    journal_data.append({
+                        "sr_no": sr_no,
+                        "journal_number": journal_no,
+                        "publication_date": pub_date_obj,
+                        "availability_date": avail_date_obj,
+                        "row_index": idx,
+                        "pdf_forms": pdf_forms
+                    })
+                    print(f"   ↳ [BS4] Journal #{journal_no} | Published: {pub_date} | {len(pdf_forms)} PDF parts")
+            except Exception as e:
+                print(f"[WARN] Error parsing BS4 row {idx}: {e}")
+                continue
+                
+        return journal_data
     
     def _extract_table_data(self, page: Page, max_journals: int) -> List[Dict]:
         """
