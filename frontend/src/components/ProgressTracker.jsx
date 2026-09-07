@@ -59,7 +59,8 @@ export default function ProgressTracker({
     if (mode === 'download') endpoint = '/api/scraper/download-pdfs'
     if (mode === 'extract') endpoint = '/api/scraper/extract-pdfs'
 
-    const es = new EventSource(`http://localhost:8000${endpoint}`)
+    const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+    const es = new EventSource(`${API_BASE}${endpoint}`)
     eventSourceRef.current = es
 
     es.onmessage = (event) => {

@@ -6,7 +6,8 @@ export default function ExportButton({ type, filters, journalId, journalIds }) {
   const [isExporting, setIsExporting] = useState(false)
 
   const getExportUrl = () => {
-    const baseUrl = 'http://localhost:8000/api'
+    const apiHost = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+    const baseUrl = `${apiHost}/api`
     
     switch (type) {
       case 'all':
