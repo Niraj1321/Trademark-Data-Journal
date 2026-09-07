@@ -63,7 +63,7 @@ app.include_router(stats.router, prefix="/api/stats", tags=["Statistics"])
 app.include_router(export.router, prefix="/api", tags=["Export"])
 
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 async def root():
     """Root endpoint"""
     return {
@@ -73,7 +73,7 @@ async def root():
     }
 
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 async def health_check():
     """Health check endpoint"""
     return {"status": "healthy"}
