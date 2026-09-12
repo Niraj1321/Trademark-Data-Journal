@@ -21,8 +21,12 @@ async def lifespan(app: FastAPI):
     print("[+] Starting Trademark Journal Scraper API...")
     
     # Create database tables
-    Base.metadata.create_all(bind=engine)
-    print("[+] Database tables created/verified")
+    try:
+        Base.metadata.create_all(bind=engine)
+        print("[+] Database tables created/verified")
+    except Exception as e:
+        print(f"[-] Warning: Database initialization failed: {e}")
+        print("[-] Server will continue running, but database features may fail until connection is fixed.")
     
     # Start scheduler if enabled
     if settings.SCRAPER_SCHEDULE_ENABLED:
