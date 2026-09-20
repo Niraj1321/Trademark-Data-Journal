@@ -381,20 +381,27 @@ class PDFExtractor:
                 if not line.startswith("IT IS A CONDITION") and not line.startswith("THIS IS SUBJECT TO"):
                     goods_services.append(line)
 
-        # If trademark_name is empty (e.g. Device / Logo mark), derive brand mark from applicant name
-        if not trademark_name and applicant_name:
-            clean_brand = re.sub(
-                r'\b(GMBH|INC\.?|CORP\.?|CORPORATION|AG|S\.?A\.?|SARL|B\.?V\.?|LIMITED|LTD\.?|PVT\.?\s+LTD\.?|PRIVATE\s+LIMITED|LLP|COMPANY|CO\.)\b',
-                '',
-                applicant_name,
-                flags=re.IGNORECASE
-            ).strip(' ,.-')
-            trademark_name = clean_brand or applicant_name
+        # If trademark_name is empty (e.g. Device / Logo mark), determine clean mark
+        if not trademark_name:
+            if applicant_name:
+                is_person = bool(re.match(r'^(MR\.?|MRS\.?|MS\.?|SH\.?|SHRI|SMT\.?|DR\.?|M\/S\.?)\b', applicant_name, re.IGNORECASE)) or (applicant_type == 'INDIVIDUAL')
+                if is_person:
+                    trademark_name = "DEVICE MARK"
+                else:
+                    clean_brand = re.sub(
+                        r'\b(GMBH|INC\.?|CORP\.?|CORPORATION|AG|S\.?A\.?|SARL|B\.?V\.?|LIMITED|LTD\.?|PVT\.?\s+LTD\.?|PRIVATE\s+LIMITED|LLP|COMPANY|CO\.)\b',
+                        '',
+                        applicant_name,
+                        flags=re.IGNORECASE
+                    ).strip(' ,.-')
+                    trademark_name = clean_brand or "DEVICE MARK"
+            else:
+                trademark_name = "DEVICE MARK"
                     
         return {
             "application_number": app_num,
             "filing_date": filing_date,
-            "trademark_name": trademark_name or applicant_name or f"TM-{app_num}",
+            "trademark_name": trademark_name or "DEVICE MARK",
             "applicant_name": applicant_name or "Unknown",
             "applicant_address": ", ".join(applicant_address) if applicant_address else None,
             "applicant_type": applicant_type,

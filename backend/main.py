@@ -183,6 +183,29 @@ async def run_db_migration():
                         
                     cleaned_records.append({"id": tm.id, "app_no": tm.application_number, "fixed_name": tm.trademark_name, "applicant": tm.applicant_name})
                     
+                # Clean individual person names mistakenly set as trademark_name for device marks
+                person_records = db.query(TrademarkApplication).filter(
+                    (TrademarkApplication.trademark_name == TrademarkApplication.applicant_name) &
+                    ((TrademarkApplication.applicant_type == 'INDIVIDUAL') | 
+                     (TrademarkApplication.applicant_name.like('MR.%')) | 
+                     (TrademarkApplication.applicant_name.like('MRS.%')) | 
+                     (TrademarkApplication.applicant_name.like('MS.%')) | 
+                     (TrademarkApplication.applicant_name.like('SHRI%')) | 
+                     (TrademarkApplication.applicant_name.like('SMT.%')))
+                ).all()
+
+                for tm in person_records:
+                    raw = tm.raw_text or ""
+                    lines = [l.strip() for l in raw.split('\n') if l.strip()]
+                    app_idx = -1
+                    for idx, line in enumerate(lines):
+                        if re.search(r'(\b\d{7,10}\b)\s+(\d{2}/\d{2}/\d{4})', line):
+                            app_idx = idx
+                            break
+                    if app_idx <= 1:
+                        tm.trademark_name = "DEVICE MARK"
+                        cleaned_records.append({"id": tm.id, "app_no": tm.application_number, "fixed_name": "DEVICE MARK", "applicant": tm.applicant_name})
+                    
                 db.commit()
                 results.append({"action": f"Cleaned {len(cleaned_records)} corrupted trademark records", "cleaned": cleaned_records[:10]})
             except Exception as clean_err:
