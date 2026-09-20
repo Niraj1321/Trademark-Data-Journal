@@ -15,7 +15,10 @@ import ErrorMessage from '../components/ErrorMessage'
 import Pagination from '../components/Pagination'
 import ExportButton from '../components/ExportButton'
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const API_BASE_URL = import.meta.env.VITE_API_URL || 
+  (typeof window !== 'undefined' && !window.location.hostname.includes('localhost') && !window.location.hostname.includes('127.0.0.1')
+    ? 'https://trademark-data-journal-backend.onrender.com'
+    : 'http://localhost:8000')
 
 const getImageUrl = (pathOrUrl) => {
   if (!pathOrUrl) return null
