@@ -125,6 +125,15 @@ export default function ExportButton({ type, filters, journalId, journalIds }) {
       }
     }, 1000)
 
+    const timeoutId = setTimeout(() => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort()
+      }
+      if (timerRef.current) clearInterval(timerRef.current)
+      setIsExporting(false)
+      setExportError('Server timeout on large 5,500+ images package. Please choose "Excel Sheet (.xlsx)" for fast 20s download.')
+    }, 90000)
+
     try {
       const url = getExportUrl(format)
       if (!url) {
@@ -134,6 +143,7 @@ export default function ExportButton({ type, filters, journalId, journalIds }) {
       const response = await fetch(url, {
         signal: abortControllerRef.current.signal
       })
+      clearTimeout(timeoutId)
 
       if (!response.ok) {
         throw new Error(`Export failed with status: ${response.status} ${response.statusText}`)
@@ -171,6 +181,7 @@ export default function ExportButton({ type, filters, journalId, journalIds }) {
       }, 4000)
 
     } catch (error) {
+      clearTimeout(timeoutId)
       if (error.name === 'AbortError') {
         return // Handled in handleCancel
       }
