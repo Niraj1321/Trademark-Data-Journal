@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     MAX_JOURNALS_TO_SCRAPE: int = 1  # Download 1 most recent journal
     
     # Download
-    DOWNLOAD_DIR: str = "downloads"
+    DOWNLOAD_DIR: str = str(_backend_dir / "downloads")
     DOWNLOAD_TIMEOUT: int = 300
     
     # PDF Processing

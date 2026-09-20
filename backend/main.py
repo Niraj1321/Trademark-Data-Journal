@@ -82,6 +82,25 @@ async def lifespan(app: FastAPI):
                                     tm.office_location = parsed["office_location"]
                     db_init.commit()
                     print(f"[✓] Repaired {corrupted_count} trademark records successfully!")
+                
+                # Auto-repair any missing applicant addresses
+                no_addr = db_init.query(TrademarkApplication).filter(
+                    (TrademarkApplication.applicant_address == None) | (TrademarkApplication.applicant_address == '')
+                ).all()
+                if no_addr:
+                    print(f"[+] Found {len(no_addr)} records with missing applicant address. Repairing...")
+                    extractor = PDFExtractor(db_init)
+                    fixed_addr = 0
+                    for tm in no_addr:
+                        if tm.raw_text:
+                            parsed = extractor._parse_page_text(tm.raw_text, tm.page_number or 1)
+                            if parsed and parsed.get("applicant_address"):
+                                tm.applicant_address = parsed["applicant_address"]
+                                if parsed.get("applicant_type"):
+                                    tm.applicant_type = parsed["applicant_type"]
+                                fixed_addr += 1
+                    db_init.commit()
+                    print(f"[✓] Repaired {fixed_addr} applicant addresses successfully!")
             except Exception as e_clean:
                 db_init.rollback()
                 print(f"[-] Auto-clean notice: {e_clean}")
@@ -231,6 +250,53 @@ async def run_db_migration():
                     
                 db.commit()
                 results.append({"action": f"Cleaned {len(cleaned_records)} corrupted trademark records", "cleaned": cleaned_records[:10]})
+                
+                # Check missing addresses
+                no_addr_recs = db.query(TrademarkApplication).filter(
+                    (TrademarkApplication.applicant_address == None) | (TrademarkApplication.applicant_address == '')
+                ).all()
+                fixed_addr_count = 0
+                for tm in no_addr_recs:
+                    if tm.raw_text:
+                        parsed = extractor._parse_page_text(tm.raw_text, tm.page_number or 1)
+                        if parsed and parsed.get("applicant_address"):
+                            tm.applicant_address = parsed["applicant_address"]
+                            if parsed.get("applicant_type"):
+                                tm.applicant_type = parsed["applicant_type"]
+                            fixed_addr_count += 1
+                db.commit()
+                results.append({"action": f"Repaired {fixed_addr_count} missing applicant addresses"})
+                
+                # Backfill wordmark images
+                no_img_recs = db.query(TrademarkApplication).filter(
+                    (TrademarkApplication.image_path == None) | (TrademarkApplication.image_path == '')
+                ).all()
+                import re
+                from pathlib import Path
+                from src.models.models import Journal
+                download_dir = Path(settings.DOWNLOAD_DIR)
+                fixed_img_count = 0
+                for tm in no_img_recs:
+                    journal_no = str(tm.journal.journal_number) if tm.journal and tm.journal.journal_number else 'general'
+                    images_dir = download_dir / 'images' / journal_no
+                    images_dir.mkdir(parents=True, exist_ok=True)
+                    app_clean = re.sub(r'[^\w\-]', '_', str(tm.application_number))
+                    img_name = f'{app_clean}.jpg'
+                    target_img = images_dir / img_name
+                    if not target_img.exists():
+                        try:
+                            img = extractor._generate_wordmark_image(
+                                trademark_name=tm.trademark_name or 'WORD MARK',
+                                app_number=str(tm.application_number),
+                                class_number=tm.class_number
+                            )
+                            img.save(target_img, 'JPEG', quality=92, optimize=True)
+                        except Exception:
+                            pass
+                    tm.image_path = f'images/{journal_no}/{img_name}'
+                    fixed_img_count += 1
+                db.commit()
+                results.append({"action": f"Backfilled {fixed_img_count} wordmark images"})
             except Exception as clean_err:
                 db.rollback()
                 results.append({"cleanup_error": str(clean_err)})

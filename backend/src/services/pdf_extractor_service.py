@@ -171,6 +171,7 @@ class PDFExtractor:
                         if record:
                             # Extract trademark logo image if embedded on the page
                             imgs = page.get_images()
+                            has_logo = False
                             if imgs:
                                 try:
                                     xref = imgs[0][0]
@@ -194,8 +195,26 @@ class PDFExtractor:
                                         target_path = images_dir / img_filename
                                         pil_img.save(target_path, "JPEG", quality=92, optimize=True)
                                         record["image_path"] = f"images/{journal_no}/{img_filename}"
+                                        has_logo = True
                                 except Exception:
                                     pass
+
+                            # If no embedded image (Word Mark), generate clean specimen plate image
+                            if not has_logo:
+                                try:
+                                    pil_img = self._generate_wordmark_image(
+                                        trademark_name=record.get("trademark_name") or "WORD MARK",
+                                        app_number=str(record.get("application_number") or ""),
+                                        class_number=record.get("class_number")
+                                    )
+                                    app_num_clean = re.sub(r'[^\w\-]', '_', str(record['application_number']))
+                                    img_filename = f"{app_num_clean}.jpg"
+                                    target_path = images_dir / img_filename
+                                    pil_img.save(target_path, "JPEG", quality=92, optimize=True)
+                                    record["image_path"] = f"images/{journal_no}/{img_filename}"
+                                except Exception:
+                                    pass
+
                             records.append(record)
                     except Exception:
                         continue
@@ -218,6 +237,7 @@ class PDFExtractor:
                             continue
                         record = self._parse_page_text(text, page_num)
                         if record:
+                            has_logo = False
                             if hasattr(page, 'images') and page.images:
                                 try:
                                     from PIL import Image
@@ -232,8 +252,25 @@ class PDFExtractor:
                                         target_path = images_dir / img_filename
                                         pil_img.save(target_path, "JPEG", quality=92)
                                         record["image_path"] = f"images/{journal_no}/{img_filename}"
+                                        has_logo = True
                                 except Exception:
                                     pass
+
+                            if not has_logo:
+                                try:
+                                    pil_img = self._generate_wordmark_image(
+                                        trademark_name=record.get("trademark_name") or "WORD MARK",
+                                        app_number=str(record.get("application_number") or ""),
+                                        class_number=record.get("class_number")
+                                    )
+                                    app_num_clean = re.sub(r'[^\w\-]', '_', str(record['application_number']))
+                                    img_filename = f"{app_num_clean}.jpg"
+                                    target_path = images_dir / img_filename
+                                    pil_img.save(target_path, "JPEG", quality=92, optimize=True)
+                                    record["image_path"] = f"images/{journal_no}/{img_filename}"
+                                except Exception:
+                                    pass
+
                             records.append(record)
                     except Exception:
                         continue
@@ -384,12 +421,27 @@ class PDFExtractor:
                             applicant_type = 'Company / Body Incorporate' if kw in ['GMBH', 'INC', 'CORP', 'CORPORATION', 'AG', 'SARL', 'B.V.', 'S.P.A.', 'S.R.L.', 'S.A.'] else kw.title()
                             break
                 else:
+                    # Distinguish Address vs Entity Type with comprehensive Indian & International patterns
+                    is_address_line = bool(
+                        re.search(r'\b\d{3}\s?\d{3}\b', line) or
+                        re.search(r'\b\d{5,6}\b', line) or
+                        re.search(r'\b(PLOT|FLAT|SHOP|HOUSE|ROOM|H\.?\s*NO|OFFICE|SURVEY|GALA|KHASRA|GAT|SECTOR|NAGAR|ROAD|STREET|LANE|MARG|AVENUE|BLDG|BUILDING|BUILDINGS|APARTMENT|APARTMENTS|RESIDENCY|TOWER|TOWERS|VILLAGE|VILL|TALUK|DIST|DISTRICT|POST|P\.?O\.?|BEHIND|OPP|NEAR|BESIDE|C\/O|D\.?NO|DOOR|FLOOR|COMPLEX|COMPLEXES|ESTATE|ESTATES|ENCLAVE|ENCLAVES|CHAMBERS|MANSION|SOCIETY|SOCIETIES)\b', line, re.IGNORECASE) or
+                        re.search(r'\b(INDIA|GUJARAT|MAHARASHTRA|DELHI|RAJASTHAN|HARYANA|PUNJAB|UTTAR PRADESH|MADHYA PRADESH|KARNATAKA|TAMIL NADU|TELANGANA|ANDHRA|KERALA|WEST BENGAL|BIHAR|ODISHA|ASSAM|UTTARAKHAND|JHARKHAND|HIMACHAL|GOA|CHHATTISGARH)\b', line, re.IGNORECASE) or
+                        re.search(r'\b(MUMBAI|KOLKATA|CHENNAI|AHMEDABAD|BANGALORE|BENGALURU|HYDERABAD|PUNE|SURAT|JAIPUR|CHANDIGARH|LUCKNOW|KANPUR|NAGPUR|INDORE|THANE|BHOPAL|PATNA|VADODARA|GHAZIABAD|LUDHIANA|AGRA|NASHIK|FARIDABAD|MEERUT|RAJKOT|VARANASI|NOIDA|GURGAON|GURUGRAM|CHEMBUR|ANDHERI|BORIVALI)\b', line, re.IGNORECASE) or
+                        re.search(r'\b(GERMANY|FRANCE|ITALY|JAPAN|CHINA|SPAIN|USA|UNITED STATES|UNITED KINGDOM|SWITZERLAND|CANADA|AUSTRALIA)\b', line, re.IGNORECASE) or
+                        re.search(r'^[A-Za-z0-9\-\/]+,\s+', line)
+                    )
+                    
                     is_type = False
-                    for kw in type_keywords:
-                        if re.search(rf'\b{re.escape(kw)}\b', line, re.IGNORECASE) or re.search(r'^(A\s+Corporation|A\s+Company|Registered under)', line, re.IGNORECASE):
+                    if not is_address_line:
+                        for kw in type_keywords:
+                            if re.search(rf'\b{re.escape(kw)}\b', line, re.IGNORECASE):
+                                applicant_type = line
+                                is_type = True
+                                break
+                        if not is_type and re.search(r'^(Individual\b|A\s+Corporation|A\s+Company|Registered under|SOCIETY\s+Registered|TRUST\s+Registered)', line, re.IGNORECASE):
                             applicant_type = line
                             is_type = True
-                            break
                     if not is_type:
                         applicant_address.append(line)
                         
@@ -472,6 +524,67 @@ class PDFExtractor:
             return datetime.strptime(date_str.strip(), "%d/%m/%Y").date()
         except Exception:
             return None
+    
+    @staticmethod
+    def _generate_wordmark_image(trademark_name: str, app_number: str = "", class_number: Optional[int] = None):
+        """
+        Generate a clean, high-resolution visual specimen card for Word Mark (text) trademarks
+        """
+        from PIL import Image, ImageDraw, ImageFont
+        
+        width, height = 600, 300
+        img = Image.new('RGB', (width, height), color=(255, 255, 255))
+        draw = ImageDraw.Draw(img)
+        
+        # Elegant outer border
+        draw.rectangle([(10, 10), (width - 11, height - 11)], outline=(226, 232, 240), width=2)
+        
+        # Top badge: 'TRADE MARK (WORD)' • CLASS XX
+        header_text = 'TRADE MARK (WORD)'
+        if class_number:
+            header_text += f' • CLASS {class_number}'
+            
+        try:
+            font_small = ImageFont.truetype('arial.ttf', 13)
+        except Exception:
+            font_small = ImageFont.load_default()
+            
+        draw.text((25, 22), header_text, fill=(100, 116, 139), font=font_small)
+        
+        # Main trademark text (auto-fit to box)
+        clean_name = trademark_name.strip() if trademark_name else "WORD MARK"
+        font_size = 46
+        font = None
+        while font_size >= 14:
+            try:
+                font = ImageFont.truetype('arialbd.ttf', font_size)
+            except Exception:
+                try:
+                    font = ImageFont.truetype('arial.ttf', font_size)
+                except Exception:
+                    font = ImageFont.load_default()
+                    break
+            bbox = draw.textbbox((0, 0), clean_name, font=font)
+            text_w = bbox[2] - bbox[0]
+            text_h = bbox[3] - bbox[1]
+            if text_w <= width - 60 and text_h <= height - 110:
+                break
+            font_size -= 4
+            
+        bbox = draw.textbbox((0, 0), clean_name, font=font)
+        text_w = bbox[2] - bbox[0]
+        text_h = bbox[3] - bbox[1]
+        x = (width - text_w) // 2 - bbox[0]
+        y = (height - text_h) // 2 - bbox[1]
+        
+        draw.text((x, y), clean_name, fill=(15, 23, 42), font=font)
+        
+        # Bottom footer info
+        if app_number:
+            bottom_text = f'App No: {app_number}'
+            draw.text((25, height - 36), bottom_text, fill=(148, 163, 184), font=font_small)
+            
+        return img
     
     def extract_all_pending(
         self,

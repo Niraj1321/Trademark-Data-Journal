@@ -1,13 +1,23 @@
-"""
-Excel export service for trademark data
-"""
+import zipfile
 from io import BytesIO
 from datetime import datetime
+from pathlib import Path
 from typing import List, Optional
 import pandas as pd
 from sqlalchemy.orm import Session
 
 from ..models.models import Journal, TrademarkApplication, PDFFile
+from ..config.settings import settings
+
+
+def _get_download_dir() -> Path:
+    d = Path(settings.DOWNLOAD_DIR)
+    if d.exists():
+        return d
+    backend_d = Path(__file__).resolve().parent.parent.parent / settings.DOWNLOAD_DIR
+    if backend_d.exists():
+        return backend_d
+    return d
 
 
 class ExcelExporter:
@@ -101,44 +111,165 @@ class ExcelExporter:
         
         output.seek(0)
         return output
+
+    def export_all_trademarks_zip(self, filters: dict = None) -> BytesIO:
+        """
+        Export all trademarks to a ZIP file containing the Excel sheet and extracted logo images
+        """
+        excel_bytes = self.export_all_trademarks(filters)
+        
+        # Query matching trademarks to find associated image files
+        query = self.db.query(TrademarkApplication)
+        if filters:
+            if filters.get('journal_number'):
+                query = query.join(Journal).filter(Journal.journal_number == filters['journal_number'])
+            if filters.get('class_number'):
+                query = query.filter(TrademarkApplication.class_number == filters['class_number'])
+            if filters.get('application_number'):
+                query = query.filter(TrademarkApplication.application_number.like(f"%{filters['application_number']}%"))
+            if filters.get('office_location'):
+                query = query.filter(TrademarkApplication.office_location == filters['office_location'])
+            if filters.get('search'):
+                search_term = f"%{filters['search']}%"
+                query = query.filter(
+                    (TrademarkApplication.trademark_name.like(search_term)) |
+                    (TrademarkApplication.applicant_name.like(search_term))
+                )
+                
+        trademarks = query.filter(TrademarkApplication.image_path.isnot(None)).all()
+        
+        zip_buffer = BytesIO()
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+            # 1. Add Excel file at root of ZIP
+            zf.writestr('trademarks_all.xlsx', excel_bytes.getvalue())
+            
+            # 2. Add all referenced logo images into the images/ directory
+            download_dir = _get_download_dir()
+            added_images = set()
+            
+            for tm in trademarks:
+                if tm.image_path and tm.image_path not in added_images:
+                    img_file = download_dir / tm.image_path
+                    if img_file.exists():
+                        # Store in zip using normalized forward slashes
+                        zip_arcname = tm.image_path.replace('\\', '/')
+                        zf.write(img_file, arcname=zip_arcname)
+                        added_images.add(tm.image_path)
+                        
+        zip_buffer.seek(0)
+        return zip_buffer
     
+    def export_images_only_zip(self, filters: dict = None) -> BytesIO:
+        """
+        Export all trademark logo images matching filters to a ZIP file without Excel
+        """
+        query = self.db.query(TrademarkApplication)
+        if filters:
+            if filters.get('journal_number'):
+                query = query.join(Journal).filter(Journal.journal_number == filters['journal_number'])
+            if filters.get('class_number'):
+                query = query.filter(TrademarkApplication.class_number == filters['class_number'])
+            if filters.get('application_number'):
+                query = query.filter(TrademarkApplication.application_number.like(f"%{filters['application_number']}%"))
+            if filters.get('office_location'):
+                query = query.filter(TrademarkApplication.office_location == filters['office_location'])
+            if filters.get('search'):
+                search_term = f"%{filters['search']}%"
+                query = query.filter(
+                    (TrademarkApplication.trademark_name.like(search_term)) |
+                    (TrademarkApplication.applicant_name.like(search_term))
+                )
+                
+        trademarks = query.filter(TrademarkApplication.image_path.isnot(None)).all()
+        
+        zip_buffer = BytesIO()
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+            download_dir = _get_download_dir()
+            added_images = set()
+            for tm in trademarks:
+                if tm.image_path and tm.image_path not in added_images:
+                    img_file = download_dir / tm.image_path
+                    if img_file.exists():
+                        zip_arcname = tm.image_path.replace('\\', '/')
+                        zf.write(img_file, arcname=zip_arcname)
+                        added_images.add(tm.image_path)
+                        
+        zip_buffer.seek(0)
+        return zip_buffer
+    
+    def export_by_journal_zip(self, journal_ids: Optional[List[int]] = None) -> BytesIO:
+        """
+        Export trademarks grouped by journal to a ZIP file containing Excel and logo images
+        """
+        excel_bytes = self.export_by_journal(journal_ids)
+        
+        query = self.db.query(TrademarkApplication).filter(TrademarkApplication.image_path.isnot(None))
+        if journal_ids:
+            query = query.filter(TrademarkApplication.journal_id.in_(journal_ids))
+        trademarks = query.all()
+        
+        zip_buffer = BytesIO()
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr('trademarks_by_journal.xlsx', excel_bytes.getvalue())
+            
+            download_dir = _get_download_dir()
+            added_images = set()
+            for tm in trademarks:
+                if tm.image_path and tm.image_path not in added_images:
+                    img_file = download_dir / tm.image_path
+                    if img_file.exists():
+                        zip_arcname = tm.image_path.replace('\\', '/')
+                        zf.write(img_file, arcname=zip_arcname)
+                        added_images.add(tm.image_path)
+                        
+        zip_buffer.seek(0)
+        return zip_buffer
+
     def export_by_pdf(self, journal_id: int) -> BytesIO:
         """
-        Export trademarks grouped by PDF file (one sheet per PDF)
-        
-        Args:
-            journal_id: Journal ID to export
-        
-        Returns:
-            BytesIO object containing the Excel file
+        Export trademarks for a specific journal, with one sheet per PDF file
         """
         journal = self.db.query(Journal).filter(Journal.id == journal_id).first()
         if not journal:
-            raise ValueError(f"Journal {journal_id} not found")
+            raise ValueError(f"Journal with id {journal_id} not found")
         
-        pdf_files = self.db.query(PDFFile).filter(
-            PDFFile.journal_id == journal_id
-        ).all()
+        pdf_files = self.db.query(PDFFile).filter(PDFFile.journal_id == journal_id).all()
         
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            # Summary sheet for this journal
-            summary_data = {
-                'Journal Number': [journal.journal_number],
-                'Publication Date': [journal.publication_date.strftime('%Y-%m-%d')],
-                'Total PDFs': [journal.pdf_count],
-                'Total Trademarks': [journal.total_trademarks],
-                'Status': [journal.status.value]
-            }
-            summary_df = pd.DataFrame(summary_data)
-            summary_df.to_excel(writer, sheet_name='Summary', index=False)
-            
-            # One sheet per PDF
             for pdf_file in pdf_files:
                 self._create_pdf_sheet(writer, pdf_file)
         
         output.seek(0)
         return output
+
+    def export_by_pdf_zip(self, journal_id: int) -> BytesIO:
+        """
+        Export trademarks by PDF to a ZIP file containing Excel and logo images
+        """
+        excel_bytes = self.export_by_pdf(journal_id)
+        
+        trademarks = self.db.query(TrademarkApplication).filter(
+            TrademarkApplication.journal_id == journal_id,
+            TrademarkApplication.image_path.isnot(None)
+        ).all()
+        
+        zip_buffer = BytesIO()
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr('journal_by_pdf.xlsx', excel_bytes.getvalue())
+            
+            download_dir = _get_download_dir()
+            added_images = set()
+            for tm in trademarks:
+                if tm.image_path and tm.image_path not in added_images:
+                    img_file = download_dir / tm.image_path
+                    if img_file.exists():
+                        zip_arcname = tm.image_path.replace('\\', '/')
+                        zf.write(img_file, arcname=zip_arcname)
+                        added_images.add(tm.image_path)
+                        
+        zip_buffer.seek(0)
+        return zip_buffer
     
     def _create_summary_sheet(self, writer, journals: List[Journal]):
         """Create summary sheet with journal statistics"""
