@@ -69,6 +69,17 @@ else:
         allow_headers=["*"],
     )
 
+from pathlib import Path
+from fastapi.staticfiles import StaticFiles
+
+# Create downloads directory if not exists
+downloads_path = Path(settings.DOWNLOAD_DIR)
+downloads_path.mkdir(parents=True, exist_ok=True)
+(downloads_path / "images").mkdir(parents=True, exist_ok=True)
+
+# Mount static downloads directory for images & PDFs
+app.mount("/downloads", StaticFiles(directory=str(downloads_path)), name="downloads")
+
 # Include routers
 app.include_router(journals.router, prefix="/api/journals", tags=["Journals"])
 app.include_router(trademarks.router, prefix="/api/trademarks", tags=["Trademarks"])

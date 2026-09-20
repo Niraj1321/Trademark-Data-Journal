@@ -49,6 +49,8 @@ class TrademarkResponse(BaseModel):
     associated_with: Optional[str]
     office_location: Optional[str]
     page_number: Optional[int]
+    image_path: Optional[str] = None
+    image_url: Optional[str] = None
     journal_id: int
     created_at: datetime
     

@@ -228,7 +228,8 @@ class ExcelExporter:
                 'Used Since': self._clean_text(tm.used_since),
                 'Associated With': self._clean_text(tm.associated_with),
                 'Office Location': self._clean_text(tm.office_location),
-                'Page Number': tm.page_number
+                'Page Number': tm.page_number,
+                'Logo Image': self._clean_text(tm.image_path)
             })
         
         return pd.DataFrame(data)

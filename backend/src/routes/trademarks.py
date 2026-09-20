@@ -127,6 +127,34 @@ async def search_trademarks(
     }
 
 
+from pathlib import Path
+from fastapi.responses import FileResponse
+from ..config.settings import settings
+
+
+@router.get("/{trademark_id}/image")
+async def get_trademark_image(
+    trademark_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Get trademark logo image directly
+    """
+    trademark = db.query(TrademarkApplication).filter(TrademarkApplication.id == trademark_id).first()
+    if not trademark or not trademark.image_path:
+        raise HTTPException(status_code=404, detail="No logo image found for this trademark")
+        
+    full_path = Path(settings.DOWNLOAD_DIR) / trademark.image_path
+    if not full_path.exists():
+        raise HTTPException(status_code=404, detail="Image file not found on disk")
+        
+    return FileResponse(
+        path=str(full_path),
+        media_type="image/jpeg",
+        filename=full_path.name
+    )
+
+
 @router.get("/{trademark_id}", response_model=TrademarkResponse)
 async def get_trademark(
     trademark_id: int,
@@ -147,3 +175,4 @@ async def get_trademark(
         raise HTTPException(status_code=404, detail="Trademark not found")
     
     return trademark
+

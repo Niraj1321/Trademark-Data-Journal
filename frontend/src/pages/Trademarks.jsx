@@ -6,7 +6,7 @@ import { format } from 'date-fns'
 import { 
   Filter, X, Search, Calendar, BookOpen, Stamp, Building2, 
   MapPin, ArrowUpRight, Sparkles, SlidersHorizontal, FileText, CheckCircle2,
-  Table, LayoutGrid
+  Table, LayoutGrid, Image as ImageIcon, Maximize2, Download
 } from 'lucide-react'
 
 import { getTrademarks } from '../services/api'
@@ -15,6 +15,15 @@ import ErrorMessage from '../components/ErrorMessage'
 import Pagination from '../components/Pagination'
 import ExportButton from '../components/ExportButton'
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+
+const getImageUrl = (pathOrUrl) => {
+  if (!pathOrUrl) return null
+  if (pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://')) return pathOrUrl
+  const clean = pathOrUrl.startsWith('/') ? pathOrUrl : `/${pathOrUrl}`
+  return `${API_BASE_URL}${clean}`
+}
+
 const POPULAR_CLASSES = [5, 9, 30, 35, 41, 42]
 const OFFICES = ['Mumbai', 'Delhi', 'Kolkata', 'Chennai', 'Ahmedabad']
 
@@ -22,6 +31,7 @@ export default function Trademarks() {
   const [page, setPage] = useState(1)
   const [limit, setLimit] = useState(50) // options: 10, 50, 100, 200
   const [viewMode, setViewMode] = useState('table') // 'table' (default) | 'grid'
+  const [previewImage, setPreviewImage] = useState(null) // { url, name, appNo, classNo }
   const [filters, setFilters] = useState({
     search: '',
     class_number: '',
@@ -328,112 +338,150 @@ export default function Trademarks() {
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
                   <tr className="bg-slate-50/90 border-b border-slate-200 text-[11px] font-extrabold uppercase tracking-wider text-slate-600">
+                    <th className="py-3.5 px-4 w-16 text-center">Logo</th>
                     <th className="py-3.5 px-4">App No & Filing</th>
-                    <th className="py-3.5 px-4 min-w-[220px]">Trademark Name</th>
+                    <th className="py-3.5 px-4 min-w-[200px]">Trademark Name</th>
                     <th className="py-3.5 px-4 text-center">Class</th>
-                    <th className="py-3.5 px-4 min-w-[200px]">Applicant & Entity</th>
+                    <th className="py-3.5 px-4 min-w-[180px]">Applicant & Entity</th>
                     <th className="py-3.5 px-4">Journal & Gazette</th>
-                    <th className="py-3.5 px-4 min-w-[220px]">Goods / Services</th>
+                    <th className="py-3.5 px-4 min-w-[200px]">Goods / Services</th>
                     <th className="py-3.5 px-4 text-right">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {trademarks.map((tm) => (
-                    <tr 
-                      key={tm.id} 
-                      className="hover:bg-primary-50/30 transition-colors duration-150 group"
-                    >
-                      {/* App No & Filing Date */}
-                      <td className="py-3.5 px-4 align-top whitespace-nowrap">
-                        <div className="font-extrabold text-slate-900 font-mono text-xs">
-                          {tm.application_number || 'N/A'}
-                        </div>
-                        {tm.filing_date && (
-                          <div className="text-[11px] text-slate-500 mt-0.5 font-medium">
-                            Filed: {format(new Date(tm.filing_date), 'dd/MM/yyyy')}
-                          </div>
-                        )}
-                      </td>
-
-                      {/* Trademark Name & Location */}
-                      <td className="py-3.5 px-4 align-top">
-                        <div className="font-bold text-slate-900 text-sm group-hover:text-primary-700 transition-colors leading-snug">
-                          {tm.trademark_name || 'Unnamed Trademark'}
-                        </div>
-                        <div className="flex flex-wrap items-center gap-1.5 mt-1">
-                          {tm.office_location && (
-                            <span className="badge badge-warning text-[10px] py-0.5 px-1.5 flex items-center space-x-0.5 font-bold">
-                              <MapPin className="h-2.5 w-2.5" />
-                              <span>{tm.office_location}</span>
-                            </span>
+                  {trademarks.map((tm) => {
+                    const imgUrl = getImageUrl(tm.image_url)
+                    return (
+                      <tr 
+                        key={tm.id} 
+                        className="hover:bg-primary-50/30 transition-colors duration-150 group"
+                      >
+                        {/* Logo Thumbnail */}
+                        <td className="py-3.5 px-4 align-top text-center">
+                          {imgUrl ? (
+                            <div 
+                              onClick={() => setPreviewImage({
+                                url: imgUrl,
+                                name: tm.trademark_name,
+                                appNo: tm.application_number,
+                                classNo: tm.class_number
+                              })}
+                              className="w-11 h-11 mx-auto rounded-lg border border-slate-200 bg-slate-50 p-1 flex items-center justify-center cursor-pointer hover:border-primary-400 hover:shadow-md transition-all group/img relative overflow-hidden"
+                              title="Click to preview logo"
+                            >
+                              <img 
+                                src={imgUrl} 
+                                alt={tm.trademark_name || 'Logo'} 
+                                className="max-h-full max-w-full object-contain"
+                                onError={(e) => {
+                                  e.target.style.display = 'none';
+                                  e.target.nextSibling.style.display = 'block';
+                                }}
+                              />
+                              <ImageIcon style={{ display: 'none' }} className="h-4 w-4 text-slate-400" />
+                              <div className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover/img:opacity-100 flex items-center justify-center transition-opacity">
+                                <Maximize2 className="h-3 w-3 text-white" />
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="w-11 h-11 mx-auto rounded-lg border border-slate-100 bg-slate-50/80 flex items-center justify-center text-slate-400" title="Word Mark / Text Only">
+                              <Stamp className="h-4 w-4 stroke-1" />
+                            </div>
                           )}
-                          {tm.used_since && (
-                            <span className="text-[10px] text-slate-500 font-medium">
-                              Used: {tm.used_since}
-                            </span>
+                        </td>
+
+                        {/* App No & Filing Date */}
+                        <td className="py-3.5 px-4 align-top whitespace-nowrap">
+                          <div className="font-extrabold text-slate-900 font-mono text-xs">
+                            {tm.application_number || 'N/A'}
+                          </div>
+                          {tm.filing_date && (
+                            <div className="text-[11px] text-slate-500 mt-0.5 font-medium">
+                              Filed: {format(new Date(tm.filing_date), 'dd/MM/yyyy')}
+                            </div>
                           )}
-                        </div>
-                      </td>
+                        </td>
 
-                      {/* Class */}
-                      <td className="py-3.5 px-4 align-top text-center whitespace-nowrap">
-                        {tm.class_number ? (
-                          <span className="badge badge-info text-xs font-extrabold px-2.5 py-1 shadow-subtle">
-                            Class {tm.class_number}
-                          </span>
-                        ) : (
-                          <span className="text-slate-400">-</span>
-                        )}
-                      </td>
-
-                      {/* Applicant & Entity */}
-                      <td className="py-3.5 px-4 align-top">
-                        <div className="font-semibold text-slate-800 leading-tight" title={tm.applicant_name}>
-                          {tm.applicant_name || 'N/A'}
-                        </div>
-                        {tm.applicant_type && (
-                          <div className="text-[10px] text-slate-500 mt-0.5 font-medium">
-                            {tm.applicant_type}
+                        {/* Trademark Name & Location */}
+                        <td className="py-3.5 px-4 align-top">
+                          <div className="font-bold text-slate-900 text-sm group-hover:text-primary-700 transition-colors leading-snug">
+                            {tm.trademark_name || 'Unnamed Trademark'}
                           </div>
-                        )}
-                      </td>
-
-                      {/* Journal & Gazette */}
-                      <td className="py-3.5 px-4 align-top whitespace-nowrap">
-                        <div className="font-bold text-primary-700 flex items-center space-x-1">
-                          <Calendar className="h-3 w-3 text-primary-600" />
-                          <span>{tm.publication_date ? format(new Date(tm.publication_date), 'dd MMM yyyy') : 'Gazette'}</span>
-                        </div>
-                        {tm.journal_number && (
-                          <div className="text-[11px] text-slate-500 mt-0.5 font-medium">
-                            Journal #{tm.journal_number}
+                          <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                            {tm.office_location && (
+                              <span className="badge badge-warning text-[10px] py-0.5 px-1.5 flex items-center space-x-0.5 font-bold">
+                                <MapPin className="h-2.5 w-2.5" />
+                                <span>{tm.office_location}</span>
+                              </span>
+                            )}
+                            {tm.used_since && (
+                              <span className="text-[10px] text-slate-500 font-medium">
+                                Used: {tm.used_since}
+                              </span>
+                            )}
                           </div>
-                        )}
-                      </td>
+                        </td>
 
-                      {/* Goods & Services */}
-                      <td className="py-3.5 px-4 align-top">
-                        {tm.goods_services ? (
-                          <p className="text-[11px] text-slate-600 line-clamp-2 leading-relaxed" title={tm.goods_services}>
-                            {tm.goods_services}
-                          </p>
-                        ) : (
-                          <span className="text-slate-400 text-[11px] italic">Not specified</span>
-                        )}
-                      </td>
+                        {/* Class */}
+                        <td className="py-3.5 px-4 align-top text-center whitespace-nowrap">
+                          {tm.class_number ? (
+                            <span className="badge badge-info text-xs font-extrabold px-2.5 py-1 shadow-subtle">
+                              Class {tm.class_number}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400">-</span>
+                          )}
+                        </td>
 
-                      {/* Action */}
-                      <td className="py-3.5 px-4 align-top text-right whitespace-nowrap">
-                        <Link
-                          to={`/trademarks/${tm.id}`}
-                          className="btn-secondary !text-xs !py-1.5 !px-3 inline-flex items-center space-x-1 group-hover:!bg-primary-600 group-hover:!text-white group-hover:!border-primary-600 transition-all shadow-subtle"
-                        >
-                          <span>View Details</span>
-                          <ArrowUpRight className="h-3.5 w-3.5" />
-                        </Link>
-                      </td>
-                    </tr>
-                  ))}
+                        {/* Applicant & Entity */}
+                        <td className="py-3.5 px-4 align-top">
+                          <div className="font-semibold text-slate-800 leading-tight" title={tm.applicant_name}>
+                            {tm.applicant_name || 'N/A'}
+                          </div>
+                          {tm.applicant_type && (
+                            <div className="text-[10px] text-slate-500 mt-0.5 font-medium">
+                              {tm.applicant_type}
+                            </div>
+                          )}
+                        </td>
+
+                        {/* Journal & Gazette */}
+                        <td className="py-3.5 px-4 align-top whitespace-nowrap">
+                          <div className="font-bold text-primary-700 flex items-center space-x-1">
+                            <Calendar className="h-3 w-3 text-primary-600" />
+                            <span>{tm.publication_date ? format(new Date(tm.publication_date), 'dd MMM yyyy') : 'Gazette'}</span>
+                          </div>
+                          {tm.journal_number && (
+                            <div className="text-[11px] text-slate-500 mt-0.5 font-medium">
+                              Journal #{tm.journal_number}
+                            </div>
+                          )}
+                        </td>
+
+                        {/* Goods & Services */}
+                        <td className="py-3.5 px-4 align-top">
+                          {tm.goods_services ? (
+                            <p className="text-[11px] text-slate-600 line-clamp-2 leading-relaxed" title={tm.goods_services}>
+                              {tm.goods_services}
+                            </p>
+                          ) : (
+                            <span className="text-slate-400 text-[11px] italic">Not specified</span>
+                          )}
+                        </td>
+
+                        {/* Action */}
+                        <td className="py-3.5 px-4 align-top text-right whitespace-nowrap">
+                          <Link
+                            to={`/trademarks/${tm.id}`}
+                            className="btn-secondary !text-xs !py-1.5 !px-3 inline-flex items-center space-x-1 group-hover:!bg-primary-600 group-hover:!text-white group-hover:!border-primary-600 transition-all shadow-subtle"
+                          >
+                            <span>View Details</span>
+                            <ArrowUpRight className="h-3.5 w-3.5" />
+                          </Link>
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
@@ -448,95 +496,133 @@ export default function Trademarks() {
               visible: { transition: { staggerChildren: 0.03 } }
             }}
           >
-            {trademarks.map((tm) => (
-              <motion.div
-                key={tm.id}
-                variants={{
-                  hidden: { opacity: 0, y: 10 },
-                  visible: { opacity: 1, y: 0 }
-                }}
-                transition={{ duration: 0.2 }}
-                className="card card-hover !p-5 relative group flex flex-col justify-between"
-              >
-                <div className="space-y-2">
-                  {/* Title & Badges */}
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="text-base font-extrabold text-slate-900 group-hover:text-primary-700 transition-colors">
-                      {tm.trademark_name || 'Unnamed Trademark'}
-                    </h3>
-                    
-                    {tm.class_number && (
-                      <span className="badge badge-info">Class {tm.class_number}</span>
-                    )}
-                    
-                    {tm.office_location && (
-                      <span className="badge badge-warning flex items-center space-x-1">
-                        <MapPin className="h-3 w-3" />
-                        <span>{tm.office_location}</span>
-                      </span>
-                    )}
+            {trademarks.map((tm) => {
+              const imgUrl = getImageUrl(tm.image_url)
+              return (
+                <motion.div
+                  key={tm.id}
+                  variants={{
+                    hidden: { opacity: 0, y: 10 },
+                    visible: { opacity: 1, y: 0 }
+                  }}
+                  transition={{ duration: 0.2 }}
+                  className="card card-hover !p-5 relative group flex flex-col justify-between"
+                >
+                  <div className="space-y-3">
+                    {/* Top Row: Logo Thumbnail & Title */}
+                    <div className="flex items-start space-x-3.5">
+                      {imgUrl ? (
+                        <div 
+                          onClick={() => setPreviewImage({
+                            url: imgUrl,
+                            name: tm.trademark_name,
+                            appNo: tm.application_number,
+                            classNo: tm.class_number
+                          })}
+                          className="w-14 h-14 shrink-0 rounded-xl border border-slate-200 bg-slate-50 p-1.5 flex items-center justify-center cursor-pointer hover:border-primary-400 hover:shadow-md transition-all group/cardimg relative overflow-hidden"
+                          title="Click to zoom logo"
+                        >
+                          <img 
+                            src={imgUrl} 
+                            alt={tm.trademark_name || 'Logo'} 
+                            className="max-h-full max-w-full object-contain"
+                            onError={(e) => {
+                              e.target.style.display = 'none';
+                              e.target.nextSibling.style.display = 'block';
+                            }}
+                          />
+                          <ImageIcon style={{ display: 'none' }} className="h-5 w-5 text-slate-400" />
+                          <div className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover/cardimg:opacity-100 flex items-center justify-center transition-opacity">
+                            <Maximize2 className="h-3.5 w-3.5 text-white" />
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="w-14 h-14 shrink-0 rounded-xl border border-slate-100 bg-slate-50 flex items-center justify-center text-slate-400">
+                          <Stamp className="h-6 w-6 stroke-1" />
+                        </div>
+                      )}
 
-                    {tm.applicant_type && (
-                      <span className="badge bg-slate-100 text-slate-700 border border-slate-200">
-                        {tm.applicant_type}
-                      </span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex flex-wrap items-center gap-1.5 mb-1">
+                          {tm.class_number && (
+                            <span className="badge badge-info text-[10px] py-0.5 px-2">Class {tm.class_number}</span>
+                          )}
+                          {tm.office_location && (
+                            <span className="badge badge-warning text-[10px] py-0.5 px-1.5 flex items-center space-x-0.5">
+                              <MapPin className="h-2.5 w-2.5" />
+                              <span>{tm.office_location}</span>
+                            </span>
+                          )}
+                        </div>
+                        <h3 className="text-base font-extrabold text-slate-900 group-hover:text-primary-700 transition-colors leading-snug truncate" title={tm.trademark_name}>
+                          {tm.trademark_name || 'Unnamed Trademark'}
+                        </h3>
+                        {tm.applicant_name && (
+                          <p className="text-xs text-slate-500 truncate mt-0.5" title={tm.applicant_name}>
+                            {tm.applicant_name}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    
+                    {/* Meta details grid */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5 text-xs text-slate-600 pt-2 border-t border-slate-100">
+                      {tm.application_number && (
+                        <p>
+                          <span className="font-semibold text-slate-700">App No:</span> <span className="font-mono font-bold text-slate-800">{tm.application_number}</span>
+                        </p>
+                      )}
+
+                      {/* Publication Date Info */}
+                      <p className="flex items-center space-x-1 text-primary-700 font-bold">
+                        <Calendar className="h-3.5 w-3.5 text-primary-600 shrink-0" />
+                        <span className="truncate">
+                          {tm.publication_date ? format(new Date(tm.publication_date), 'dd MMM yyyy') : 'Gazette'}
+                        </span>
+                        {tm.journal_number && (
+                          <span className="text-slate-400 font-normal">
+                            (#{tm.journal_number})
+                          </span>
+                        )}
+                      </p>
+
+                      {tm.filing_date && (
+                        <p>
+                          <span className="font-semibold text-slate-700">Filing Date:</span> {format(new Date(tm.filing_date), 'dd/MM/yyyy')}
+                        </p>
+                      )}
+
+                      {tm.applicant_type && (
+                        <p className="truncate">
+                          <span className="font-semibold text-slate-700">Entity:</span> {tm.applicant_type}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Goods / Services Description */}
+                    {tm.goods_services && (
+                      <p className="text-xs text-slate-500 line-clamp-2 pt-2 border-t border-slate-100">
+                        <span className="font-semibold text-slate-700">Goods/Services:</span> {tm.goods_services}
+                      </p>
                     )}
                   </div>
                   
-                  {/* Meta details grid */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-600">
-                    {tm.application_number && (
-                      <p>
-                        <span className="font-semibold text-slate-700">App No:</span> {tm.application_number}
-                      </p>
-                    )}
-
-                    {tm.applicant_name && (
-                      <p className="truncate" title={tm.applicant_name}>
-                        <span className="font-semibold text-slate-700">Applicant:</span> {tm.applicant_name}
-                      </p>
-                    )}
-
-                    {/* Publication Date Info */}
-                    <p className="flex items-center space-x-1.5 text-primary-700 font-bold">
-                      <Calendar className="h-3.5 w-3.5 text-primary-600" />
-                      <span>
-                        Published: {tm.publication_date ? format(new Date(tm.publication_date), 'dd MMM yyyy') : 'Official Gazette'}
-                      </span>
-                      {tm.journal_number && (
-                        <span className="text-slate-400 font-normal">
-                          (J#{tm.journal_number})
-                        </span>
-                      )}
-                    </p>
-
-                    {tm.filing_date && (
-                      <p>
-                        <span className="font-semibold text-slate-700">Filing Date:</span> {format(new Date(tm.filing_date), 'dd/MM/yyyy')}
-                      </p>
-                    )}
+                  {/* Action Button */}
+                  <div className="pt-3 mt-3 border-t border-slate-100 flex items-center justify-between">
+                    <span className="text-[11px] text-slate-400 font-medium">
+                      {imgUrl ? 'Device Mark' : 'Word Mark'}
+                    </span>
+                    <Link
+                      to={`/trademarks/${tm.id}`}
+                      className="btn-secondary !text-xs !py-1.5 !px-3 flex items-center space-x-1.5 group-hover:!bg-primary-600 group-hover:!text-white group-hover:!border-primary-600 transition-all shadow-subtle"
+                    >
+                      <span>View Details</span>
+                      <ArrowUpRight className="h-3.5 w-3.5" />
+                    </Link>
                   </div>
-
-                  {/* Goods / Services Description */}
-                  {tm.goods_services && (
-                    <p className="text-xs text-slate-500 line-clamp-2 pt-2 border-t border-slate-100">
-                      <span className="font-semibold text-slate-700">Goods/Services:</span> {tm.goods_services}
-                    </p>
-                  )}
-                </div>
-                
-                {/* Action Button */}
-                <div className="pt-3 mt-3 border-t border-slate-100 flex items-center justify-end">
-                  <Link
-                    to={`/trademarks/${tm.id}`}
-                    className="btn-secondary !text-xs !py-1.5 !px-3 flex items-center space-x-1.5 group-hover:!bg-primary-600 group-hover:!text-white group-hover:!border-primary-600 transition-all shadow-subtle"
-                  >
-                    <span>View Details</span>
-                    <ArrowUpRight className="h-3.5 w-3.5" />
-                  </Link>
-                </div>
-              </motion.div>
-            ))}
+                </motion.div>
+              )
+            })}
           </motion.div>
         )
       )}
@@ -571,6 +657,61 @@ export default function Trademarks() {
           limitOptions={[10, 50, 100, 200]}
           totalRecords={totalCount}
         />
+      )}
+
+      {/* Quick Image Preview Lightbox Modal */}
+      {previewImage && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in duration-200"
+          onClick={() => setPreviewImage(null)}
+        >
+          <div 
+            className="relative max-w-3xl max-h-[85vh] bg-white rounded-2xl p-6 shadow-2xl flex flex-col items-center"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setPreviewImage(null)}
+              className="absolute top-4 right-4 p-2 rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900 transition-colors"
+            >
+              <X className="h-5 w-5" />
+            </button>
+
+            <div className="text-center mb-4 pr-8">
+              <h3 className="text-lg font-extrabold text-slate-900">{previewImage.name || 'Trademark Logo'}</h3>
+              <p className="text-xs text-slate-500 font-mono mt-0.5">
+                {previewImage.appNo && `Application #${previewImage.appNo}`}
+                {previewImage.classNo && ` • Class ${previewImage.classNo}`}
+              </p>
+            </div>
+
+            <div className="max-h-[55vh] overflow-auto flex items-center justify-center p-4 bg-slate-50 rounded-xl border border-slate-200">
+              <img 
+                src={previewImage.url} 
+                alt={previewImage.name || 'Logo Preview'} 
+                className="max-h-[50vh] max-w-full object-contain drop-shadow-md"
+              />
+            </div>
+
+            <div className="mt-4 flex items-center space-x-3">
+              <a
+                href={previewImage.url}
+                download={`${previewImage.appNo || 'trademark'}_logo.jpg`}
+                target="_blank"
+                rel="noreferrer"
+                className="btn-primary !text-xs !py-2 !px-4 inline-flex items-center space-x-2 shadow-md"
+              >
+                <Download className="h-4 w-4" />
+                <span>Download Logo</span>
+              </a>
+              <button
+                onClick={() => setPreviewImage(null)}
+                className="btn-secondary !text-xs !py-2 !px-4"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

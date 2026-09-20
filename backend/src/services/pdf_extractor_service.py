@@ -135,13 +135,25 @@ class PDFExtractor:
     
     def _process_pdf_fast(self, pdf_file: PDFFile) -> tuple[List[Dict], int]:
         """
-        Process PDF and extract trademark records using PyMuPDF (fitz) or fallback
+        Process PDF and extract trademark records and logos using PyMuPDF (fitz) or fallback
         """
         records = []
         file_path = pdf_file.file_path
         
         if not file_path or not Path(file_path).exists():
             return records, 0
+
+        # Determine journal number and setup image directory
+        journal_no = "unknown"
+        if pdf_file.journal and pdf_file.journal.journal_number:
+            journal_no = str(pdf_file.journal.journal_number)
+        elif pdf_file.journal_id:
+            j = self.db.query(Journal).filter(Journal.id == pdf_file.journal_id).first()
+            if j and j.journal_number:
+                journal_no = str(j.journal_number)
+                
+        images_dir = Path(settings.DOWNLOAD_DIR) / "images" / journal_no
+        images_dir.mkdir(parents=True, exist_ok=True)
             
         if HAVE_FITZ:
             try:
@@ -157,6 +169,33 @@ class PDFExtractor:
                         
                         record = self._parse_page_text(text, page_num)
                         if record:
+                            # Extract trademark logo image if embedded on the page
+                            imgs = page.get_images()
+                            if imgs:
+                                try:
+                                    xref = imgs[0][0]
+                                    base_img = doc.extract_image(xref)
+                                    img_bytes = base_img.get("image")
+                                    if img_bytes:
+                                        from PIL import Image
+                                        import io
+                                        pil_img = Image.open(io.BytesIO(img_bytes))
+                                        if pil_img.mode in ('RGBA', 'LA') or (pil_img.mode == 'P' and 'transparency' in pil_img.info):
+                                            bg = Image.new('RGB', pil_img.size, (255, 255, 255))
+                                            if pil_img.mode == 'P':
+                                                pil_img = pil_img.convert('RGBA')
+                                            bg.paste(pil_img, mask=pil_img.split()[3])
+                                            pil_img = bg
+                                        elif pil_img.mode != 'RGB':
+                                            pil_img = pil_img.convert('RGB')
+                                            
+                                        app_num_clean = re.sub(r'[^\w\-]', '_', str(record['application_number']))
+                                        img_filename = f"{app_num_clean}.jpg"
+                                        target_path = images_dir / img_filename
+                                        pil_img.save(target_path, "JPEG", quality=92, optimize=True)
+                                        record["image_path"] = f"images/{journal_no}/{img_filename}"
+                                except Exception:
+                                    pass
                             records.append(record)
                     except Exception:
                         continue
@@ -179,6 +218,22 @@ class PDFExtractor:
                             continue
                         record = self._parse_page_text(text, page_num)
                         if record:
+                            if hasattr(page, 'images') and page.images:
+                                try:
+                                    from PIL import Image
+                                    import io
+                                    first_img = page.images[0]
+                                    img_stream = first_img.get('stream')
+                                    if img_stream:
+                                        raw_bytes = img_stream.get_data()
+                                        pil_img = Image.open(io.BytesIO(raw_bytes)).convert('RGB')
+                                        app_num_clean = re.sub(r'[^\w\-]', '_', str(record['application_number']))
+                                        img_filename = f"{app_num_clean}.jpg"
+                                        target_path = images_dir / img_filename
+                                        pil_img.save(target_path, "JPEG", quality=92)
+                                        record["image_path"] = f"images/{journal_no}/{img_filename}"
+                                except Exception:
+                                    pass
                             records.append(record)
                     except Exception:
                         continue
@@ -315,6 +370,7 @@ class PDFExtractor:
             "office_location": office_location,
             "goods_services": " ".join(goods_services) if goods_services else None,
             "page_number": page_num,
+            "image_path": None,
             "raw_text": text[:3000]
         }
     

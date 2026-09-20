@@ -98,6 +98,7 @@ class TrademarkApplication(Base):
     associated_with = Column(String(200), nullable=True)
     office_location = Column(String(200), nullable=True)  # Increased from 100 to 200
     page_number = Column(Integer, nullable=True)
+    image_path = Column(String(500), nullable=True)  # Relative path to extracted logo image
     raw_text = Column(Text(16777215), nullable=True)  # MEDIUMTEXT - up to 16MB
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -117,6 +118,14 @@ class TrademarkApplication(Base):
     @property
     def class_range(self):
         return self.pdf_file.class_range if self.pdf_file else None
+
+    @property
+    def image_url(self):
+        if self.image_path:
+            # Clean forward slashes for URL format
+            clean_path = self.image_path.replace('\\', '/').lstrip('/')
+            return f"/downloads/{clean_path}"
+        return None
 
 
 class ScraperLog(Base):
