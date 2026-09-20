@@ -1,3 +1,4 @@
+import tempfile
 import zipfile
 from io import BytesIO
 from datetime import datetime
@@ -10,30 +11,36 @@ from ..models.models import Journal, TrademarkApplication, PDFFile
 from ..config.settings import settings
 
 
+_cached_base_downloads_dir = None
+
 def _get_download_dir() -> Path:
-    d = Path(settings.DOWNLOAD_DIR)
-    if d.exists():
-        return d
-    backend_d = Path(__file__).resolve().parent.parent.parent / settings.DOWNLOAD_DIR
-    if backend_d.exists():
-        return backend_d
-    return d
+    global _cached_base_downloads_dir
+    if _cached_base_downloads_dir and _cached_base_downloads_dir.is_dir():
+        return _cached_base_downloads_dir
+
+    candidates = [
+        Path(settings.DOWNLOAD_DIR),
+        Path(__file__).resolve().parent.parent.parent / "downloads",
+        Path(__file__).resolve().parent.parent.parent.parent / "downloads",
+        Path.cwd() / "downloads",
+        Path.cwd() / "backend" / "downloads",
+    ]
+    for cand in candidates:
+        if cand.is_dir():
+            _cached_base_downloads_dir = cand
+            return cand
+    _cached_base_downloads_dir = Path(settings.DOWNLOAD_DIR)
+    return _cached_base_downloads_dir
 
 
 def _find_image_file(image_path: str) -> Optional[Path]:
     if not image_path:
         return None
     clean = image_path.replace('\\', '/').lstrip('/')
-    candidates = [
-        Path(settings.DOWNLOAD_DIR) / clean,
-        Path(__file__).resolve().parent.parent.parent / "downloads" / clean,
-        Path(__file__).resolve().parent.parent.parent.parent / "downloads" / clean,
-        Path.cwd() / "downloads" / clean,
-        Path.cwd() / "backend" / "downloads" / clean,
-    ]
-    for cand in candidates:
-        if cand.is_file():
-            return cand
+    base = _get_download_dir()
+    cand = base / clean
+    if cand.is_file():
+        return cand
     return None
 
 
@@ -155,8 +162,8 @@ class ExcelExporter:
                 
         trademarks = query.filter(TrademarkApplication.image_path.isnot(None)).all()
         
-        zip_buffer = BytesIO()
-        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+        zip_buffer = tempfile.SpooledTemporaryFile(max_size=32 * 1024 * 1024)
+        with zipfile.ZipFile(zip_buffer, 'w', compression=zipfile.ZIP_STORED) as zf:
             # 1. Add Excel file at root of ZIP
             zf.writestr('trademarks_all.xlsx', excel_bytes.getvalue())
             
@@ -196,8 +203,8 @@ class ExcelExporter:
                 
         trademarks = query.filter(TrademarkApplication.image_path.isnot(None)).all()
         
-        zip_buffer = BytesIO()
-        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+        zip_buffer = tempfile.SpooledTemporaryFile(max_size=32 * 1024 * 1024)
+        with zipfile.ZipFile(zip_buffer, 'w', compression=zipfile.ZIP_STORED) as zf:
             added_images = set()
             for tm in trademarks:
                 if tm.image_path and tm.image_path not in added_images:
@@ -221,8 +228,8 @@ class ExcelExporter:
             query = query.filter(TrademarkApplication.journal_id.in_(journal_ids))
         trademarks = query.all()
         
-        zip_buffer = BytesIO()
-        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+        zip_buffer = tempfile.SpooledTemporaryFile(max_size=32 * 1024 * 1024)
+        with zipfile.ZipFile(zip_buffer, 'w', compression=zipfile.ZIP_STORED) as zf:
             zf.writestr('trademarks_by_journal.xlsx', excel_bytes.getvalue())
             
             added_images = set()
@@ -266,8 +273,8 @@ class ExcelExporter:
             TrademarkApplication.image_path.isnot(None)
         ).all()
         
-        zip_buffer = BytesIO()
-        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+        zip_buffer = tempfile.SpooledTemporaryFile(max_size=32 * 1024 * 1024)
+        with zipfile.ZipFile(zip_buffer, 'w', compression=zipfile.ZIP_STORED) as zf:
             zf.writestr('journal_by_pdf.xlsx', excel_bytes.getvalue())
             
             added_images = set()
