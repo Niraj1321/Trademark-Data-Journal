@@ -33,11 +33,13 @@ dist/
 Thumbs.db
 
 # Project specific
-downloads/
-backend/downloads/*
+/downloads/
+backend/downloads/*.pdf
+backend/downloads/*.tmp
+backend/downloads/2276/
+!backend/downloads/images/
+!backend/downloads/images/**
 !backend/downloads/.gitkeep
-backend/downloads/images/*
-!backend/downloads/images/.gitkeep
 *.pdf
 *.log
 *.tmp

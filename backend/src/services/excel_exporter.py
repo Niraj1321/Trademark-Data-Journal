@@ -20,6 +20,23 @@ def _get_download_dir() -> Path:
     return d
 
 
+def _find_image_file(image_path: str) -> Optional[Path]:
+    if not image_path:
+        return None
+    clean = image_path.replace('\\', '/').lstrip('/')
+    candidates = [
+        Path(settings.DOWNLOAD_DIR) / clean,
+        Path(__file__).resolve().parent.parent.parent / "downloads" / clean,
+        Path(__file__).resolve().parent.parent.parent.parent / "downloads" / clean,
+        Path.cwd() / "downloads" / clean,
+        Path.cwd() / "backend" / "downloads" / clean,
+    ]
+    for cand in candidates:
+        if cand.is_file():
+            return cand
+    return None
+
+
 class ExcelExporter:
     """
     Export trademark data to Excel with multiple sheets
@@ -144,16 +161,13 @@ class ExcelExporter:
             zf.writestr('trademarks_all.xlsx', excel_bytes.getvalue())
             
             # 2. Add all referenced logo images into the images/ directory
-            download_dir = _get_download_dir()
             added_images = set()
-            
             for tm in trademarks:
                 if tm.image_path and tm.image_path not in added_images:
-                    img_file = download_dir / tm.image_path
-                    if img_file.exists():
-                        # Store in zip using normalized forward slashes
+                    img_file = _find_image_file(tm.image_path)
+                    if img_file:
                         zip_arcname = tm.image_path.replace('\\', '/')
-                        zf.write(img_file, arcname=zip_arcname)
+                        zf.write(img_file, arcname=zip_arcname, compress_type=zipfile.ZIP_STORED)
                         added_images.add(tm.image_path)
                         
         zip_buffer.seek(0)
@@ -184,14 +198,13 @@ class ExcelExporter:
         
         zip_buffer = BytesIO()
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
-            download_dir = _get_download_dir()
             added_images = set()
             for tm in trademarks:
                 if tm.image_path and tm.image_path not in added_images:
-                    img_file = download_dir / tm.image_path
-                    if img_file.exists():
+                    img_file = _find_image_file(tm.image_path)
+                    if img_file:
                         zip_arcname = tm.image_path.replace('\\', '/')
-                        zf.write(img_file, arcname=zip_arcname)
+                        zf.write(img_file, arcname=zip_arcname, compress_type=zipfile.ZIP_STORED)
                         added_images.add(tm.image_path)
                         
         zip_buffer.seek(0)
@@ -212,14 +225,13 @@ class ExcelExporter:
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
             zf.writestr('trademarks_by_journal.xlsx', excel_bytes.getvalue())
             
-            download_dir = _get_download_dir()
             added_images = set()
             for tm in trademarks:
                 if tm.image_path and tm.image_path not in added_images:
-                    img_file = download_dir / tm.image_path
-                    if img_file.exists():
+                    img_file = _find_image_file(tm.image_path)
+                    if img_file:
                         zip_arcname = tm.image_path.replace('\\', '/')
-                        zf.write(img_file, arcname=zip_arcname)
+                        zf.write(img_file, arcname=zip_arcname, compress_type=zipfile.ZIP_STORED)
                         added_images.add(tm.image_path)
                         
         zip_buffer.seek(0)
@@ -258,14 +270,13 @@ class ExcelExporter:
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
             zf.writestr('journal_by_pdf.xlsx', excel_bytes.getvalue())
             
-            download_dir = _get_download_dir()
             added_images = set()
             for tm in trademarks:
                 if tm.image_path and tm.image_path not in added_images:
-                    img_file = download_dir / tm.image_path
-                    if img_file.exists():
+                    img_file = _find_image_file(tm.image_path)
+                    if img_file:
                         zip_arcname = tm.image_path.replace('\\', '/')
-                        zf.write(img_file, arcname=zip_arcname)
+                        zf.write(img_file, arcname=zip_arcname, compress_type=zipfile.ZIP_STORED)
                         added_images.add(tm.image_path)
                         
         zip_buffer.seek(0)
