@@ -387,8 +387,16 @@ export default function Trademarks() {
                               </div>
                             </div>
                           ) : (
-                            <div className="w-11 h-11 mx-auto rounded-lg border border-slate-100 bg-slate-50/80 flex items-center justify-center text-slate-400" title="Word Mark / Text Only">
-                              <Stamp className="h-4 w-4 stroke-1" />
+                            <div 
+                              className="w-11 h-11 mx-auto rounded-lg border-2 border-slate-800 bg-white p-0.5 flex flex-col items-center justify-center text-slate-900 shadow-2xs hover:border-primary-600 transition-all cursor-default" 
+                              title={`Word Mark: ${tm.trademark_name}`}
+                            >
+                              <span className="text-[9px] font-black tracking-tighter uppercase font-sans line-clamp-1 leading-none text-slate-950 px-0.5">
+                                {tm.trademark_name ? (tm.trademark_name.length > 5 ? tm.trademark_name.slice(0, 4) + '..' : tm.trademark_name) : 'TEXT'}
+                              </span>
+                              <span className="text-[6.5px] font-black uppercase tracking-widest text-slate-400 mt-0.5">
+                                MARK
+                              </span>
                             </div>
                           )}
                         </td>
@@ -540,8 +548,13 @@ export default function Trademarks() {
                           </div>
                         </div>
                       ) : (
-                        <div className="w-14 h-14 shrink-0 rounded-xl border border-slate-100 bg-slate-50 flex items-center justify-center text-slate-400">
-                          <Stamp className="h-6 w-6 stroke-1" />
+                        <div className="w-14 h-14 shrink-0 rounded-xl border-2 border-slate-900 bg-white p-1 flex flex-col items-center justify-center text-center shadow-xs">
+                          <span className="text-[10px] font-black text-slate-950 font-sans uppercase tracking-tight line-clamp-1 leading-tight px-0.5">
+                            {tm.trademark_name ? (tm.trademark_name.length > 7 ? tm.trademark_name.slice(0, 6) + '..' : tm.trademark_name) : 'WORD'}
+                          </span>
+                          <span className="text-[7px] font-extrabold text-slate-400 uppercase tracking-widest mt-0.5">
+                            WORD MARK
+                          </span>
                         </div>
                       )}
 

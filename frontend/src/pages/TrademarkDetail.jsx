@@ -117,14 +117,42 @@ export default function TrademarkDetail() {
                 </button>
               </div>
             ) : (
-              <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50/70 p-6 flex flex-col items-center justify-center min-h-[220px] text-center">
-                <Tag className="h-10 w-10 text-slate-400 mb-2" />
-                <span className="text-xs font-bold text-slate-700">Word Mark Application</span>
-                <p className="text-[11px] text-slate-500 mt-1 max-w-xs">
-                  This trademark is registered as a text mark without a separate graphical device logo.
-                </p>
-                <div className="mt-3 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-800 shadow-subtle">
-                  "{tm.trademark_name}"
+              /* Official Trademark Journal Word Mark Representation Specimen Plate */
+              <div className="rounded-xl border-2 border-slate-900/80 bg-white p-6 flex flex-col items-center justify-center min-h-[220px] shadow-sm relative overflow-hidden group">
+                <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-slate-900 via-primary-600 to-slate-900" />
+                
+                {/* Journal Specimen Tag */}
+                <div className="flex items-center justify-between w-full mb-3 pb-2 border-b border-slate-100">
+                  <span className="text-[10px] font-extrabold uppercase tracking-widest text-slate-500 flex items-center space-x-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block"></span>
+                    <span>Gazette Word Mark Specimen</span>
+                  </span>
+                  {tm.class_number && (
+                    <span className="text-[10px] font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded">
+                      Class {tm.class_number}
+                    </span>
+                  )}
+                </div>
+
+                {/* The Exact Bold Word Mark Typography (Like in the Journal PDF) */}
+                <div className="py-5 px-4 my-auto w-full flex items-center justify-center bg-slate-50/50 rounded-lg border border-slate-200/60">
+                  <h3 className="text-2xl sm:text-3xl font-black tracking-wider text-slate-950 font-sans uppercase text-center select-all drop-shadow-xs">
+                    {tm.trademark_name || 'WORD MARK'}
+                  </h3>
+                </div>
+
+                {/* Subtext info */}
+                <div className="w-full mt-3 pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500 font-medium">
+                  <span>Standard Typographic Representation</span>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(tm.trademark_name || '');
+                      alert('Trademark name copied to clipboard!');
+                    }}
+                    className="text-primary-600 hover:text-primary-800 font-bold hover:underline"
+                  >
+                    Copy Name
+                  </button>
                 </div>
               </div>
             )}
