@@ -135,7 +135,63 @@ async def run_db_migration():
             conn.commit()
             results.append({"action": "verified office_location column"})
                 
-            # 4. Verify count query
+            # 4. Auto-clean existing contaminated trademark records (Priority claimed / International Reg headers)
+            import re
+            from backend.src.config.database import SessionLocal
+            from backend.src.models.models import TrademarkApplication
+            
+            db = SessionLocal()
+            try:
+                contaminated = db.query(TrademarkApplication).filter(
+                    (TrademarkApplication.trademark_name.like('Priority claimed%')) |
+                    (TrademarkApplication.applicant_name.like('[International%'))
+                ).all()
+                
+                cleaned_records = []
+                for tm in contaminated:
+                    raw = tm.raw_text or ""
+                    lines = [l.strip() for l in raw.split('\n') if l.strip()]
+                    
+                    for idx, line in enumerate(lines):
+                        intl_m = re.search(r'\[International Registration No\.\s*:\s*([^\]]+)\]', line, re.IGNORECASE)
+                        if intl_m:
+                            tm.associated_with = f"IR No: {intl_m.group(1).strip()}"
+                            if idx + 1 < len(lines):
+                                next_line = lines[idx + 1]
+                                if not re.search(r'Used Since|Proposed to be Used|IR DIVISION', next_line, re.IGNORECASE):
+                                    tm.applicant_name = next_line
+                                    
+                                    # Detect entity type
+                                    for kw in ['GMBH', 'INC', 'CORP', 'CORPORATION', 'AG', 'SARL', 'B.V.', 'LIMITED', 'LTD', 'PVT LTD', 'PRIVATE LIMITED', 'LLP']:
+                                        if re.search(rf'\b{re.escape(kw)}\b', next_line, re.IGNORECASE):
+                                            tm.applicant_type = 'Company / Body Incorporate' if kw in ['GMBH', 'INC', 'CORP', 'CORPORATION', 'AG', 'SARL', 'B.V.'] else kw.title()
+                                            break
+                                            
+                                    # Clean trademark name
+                                    clean_brand = re.sub(
+                                        r'\b(GMBH|INC\.?|CORP\.?|CORPORATION|AG|S\.?A\.?|SARL|B\.?V\.?|LIMITED|LTD\.?|PVT\.?\s+LTD\.?|PRIVATE\s+LIMITED|LLP|COMPANY|CO\.)\b',
+                                        '',
+                                        next_line,
+                                        flags=re.IGNORECASE
+                                    ).strip(' ,.-')
+                                    if clean_brand:
+                                        tm.trademark_name = clean_brand
+                                    break
+                    
+                    if tm.goods_services and tm.goods_services.startswith("IR DIVISION"):
+                        tm.goods_services = tm.goods_services.replace("IR DIVISION", "", 1).strip()
+                        
+                    cleaned_records.append({"id": tm.id, "app_no": tm.application_number, "fixed_name": tm.trademark_name, "applicant": tm.applicant_name})
+                    
+                db.commit()
+                results.append({"action": f"Cleaned {len(cleaned_records)} corrupted trademark records", "cleaned": cleaned_records[:10]})
+            except Exception as clean_err:
+                db.rollback()
+                results.append({"cleanup_error": str(clean_err)})
+            finally:
+                db.close()
+                
+            # 5. Verify count query
             tm_count = conn.execute(text("SELECT count(*) FROM trademark_applications")).scalar()
             results.append({"total_trademarks": tm_count})
             

@@ -277,9 +277,19 @@ class PDFExtractor:
             
         # Trademark Word Mark (if present before application number)
         trademark_name = None
+        priority_info = []
         if app_idx > 1:
-            tm_lines = lines[1:app_idx]
-            trademark_name = " ".join(tm_lines).strip()
+            tm_lines = []
+            for l in lines[1:app_idx]:
+                # Filter out priority claims, journal headers, numbers
+                if re.search(r'Priority\s+claimed', l, re.IGNORECASE) or re.search(r'Application\s*No\.?\s*:', l, re.IGNORECASE):
+                    priority_info.append(l)
+                    continue
+                if re.search(r'Trade\s*Marks?\s*Journal', l, re.IGNORECASE) or re.match(r'^\d+$', l):
+                    continue
+                tm_lines.append(l)
+            if tm_lines:
+                trademark_name = " ".join(tm_lines).strip()
             
         after_lines = lines[app_idx + 1:]
         applicant_name = None
@@ -287,6 +297,7 @@ class PDFExtractor:
         applicant_type = None
         attorney_name = None
         attorney_address = []
+        associated_with = None
         used_since = None
         office_location = None
         goods_services = []
@@ -295,12 +306,19 @@ class PDFExtractor:
         type_keywords = [
             'INDIVIDUAL', 'PARTNERSHIP', 'PRIVATE LIMITED', 'LIMITED COMPANY', 
             'LLP', 'PROPRIETORSHIP', 'BODY INCORPORATE', 'HUF', 'SOLE PROPRIETOR',
-            'PARTNERSHIP FIRM', 'COMPANY', 'SOCIETY', 'TRUST'
+            'PARTNERSHIP FIRM', 'COMPANY', 'SOCIETY', 'TRUST', 'GMBH', 'INC',
+            'CORPORATION', 'LIMITED', 'LTD'
         ]
         cities = ['MUMBAI', 'DELHI', 'KOLKATA', 'CHENNAI', 'AHMEDABAD']
         
         for line in after_lines:
             if re.match(r'^\d+$', line):
+                continue
+
+            # Capture International Registration No.
+            intl_match = re.search(r'\[International Registration No\.\s*:\s*([^\]]+)\]', line, re.IGNORECASE)
+            if intl_match:
+                associated_with = f"IR No: {intl_match.group(1).strip()}"
                 continue
                 
             if re.search(r'Address for service in India/(Attorney|Agents)\s*address:', line, re.IGNORECASE):
@@ -325,6 +343,11 @@ class PDFExtractor:
             if state == "APPLICANT":
                 if not applicant_name:
                     applicant_name = line
+                    # Auto-detect entity type from applicant name
+                    for kw in ['GMBH', 'INC', 'CORP', 'CORPORATION', 'AG', 'SARL', 'B.V.', 'LIMITED', 'LTD', 'PVT LTD', 'PRIVATE LIMITED', 'LLP']:
+                        if re.search(rf'\b{re.escape(kw)}\b', line, re.IGNORECASE):
+                            applicant_type = 'Company / Body Incorporate' if kw in ['GMBH', 'INC', 'CORP', 'CORPORATION', 'AG', 'SARL', 'B.V.'] else kw.title()
+                            break
                 else:
                     is_type = False
                     for kw in type_keywords:
@@ -349,12 +372,24 @@ class PDFExtractor:
                         found_city = True
                         break
                 state = "GOODS"
-                if not found_city:
+                if not found_city and not line.startswith("IR DIVISION"):
                     goods_services.append(line)
                     
             elif state == "GOODS":
+                if line.startswith("IR DIVISION"):
+                    continue
                 if not line.startswith("IT IS A CONDITION") and not line.startswith("THIS IS SUBJECT TO"):
                     goods_services.append(line)
+
+        # If trademark_name is empty (e.g. Device / Logo mark), derive brand mark from applicant name
+        if not trademark_name and applicant_name:
+            clean_brand = re.sub(
+                r'\b(GMBH|INC\.?|CORP\.?|CORPORATION|AG|S\.?A\.?|SARL|B\.?V\.?|LIMITED|LTD\.?|PVT\.?\s+LTD\.?|PRIVATE\s+LIMITED|LLP|COMPANY|CO\.)\b',
+                '',
+                applicant_name,
+                flags=re.IGNORECASE
+            ).strip(' ,.-')
+            trademark_name = clean_brand or applicant_name
                     
         return {
             "application_number": app_num,
@@ -366,6 +401,7 @@ class PDFExtractor:
             "class_number": class_num,
             "attorney_name": attorney_name,
             "attorney_address": ", ".join(attorney_address) if attorney_address else None,
+            "associated_with": associated_with,
             "used_since": used_since,
             "office_location": office_location,
             "goods_services": " ".join(goods_services) if goods_services else None,
