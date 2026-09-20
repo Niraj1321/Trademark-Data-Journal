@@ -110,6 +110,40 @@ async def health_check():
     return {"status": "healthy"}
 
 
+@app.get("/api/migrate-db")
+async def run_db_migration():
+    """Run database schema migration on the active database"""
+    results = []
+    try:
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            # 1. Check trademark_applications columns
+            col_rows = conn.execute(text("SHOW COLUMNS FROM trademark_applications")).fetchall()
+            cols = [r[0] for r in col_rows]
+            results.append({"existing_columns": cols})
+            
+            # 2. Add image_path if missing
+            if "image_path" not in cols:
+                conn.execute(text("ALTER TABLE trademark_applications ADD COLUMN image_path VARCHAR(500) NULL AFTER page_number"))
+                conn.commit()
+                results.append({"action": "added image_path column"})
+            else:
+                results.append({"action": "image_path already exists"})
+                
+            # 3. Check office_location column length
+            conn.execute(text("ALTER TABLE trademark_applications MODIFY COLUMN office_location VARCHAR(200) NULL"))
+            conn.commit()
+            results.append({"action": "verified office_location column"})
+                
+            # 4. Verify count query
+            tm_count = conn.execute(text("SELECT count(*) FROM trademark_applications")).scalar()
+            results.append({"total_trademarks": tm_count})
+            
+        return {"status": "success", "results": results}
+    except Exception as e:
+        return {"status": "error", "error": str(e), "results": results}
+
+
 if __name__ == "__main__":
     uvicorn.run(
         "main:app",
