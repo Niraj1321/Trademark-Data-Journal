@@ -104,7 +104,7 @@ class PDFExtractor:
             elapsed = time.time() - t0
             pages_per_sec = total_pages / max(0.01, elapsed)
             
-            print(f"   ↳ [{file_index}/{total_files}] {pdf_file.file_name} ({total_pages} pgs): {records_saved} TMs in {elapsed:.2f}s ({pages_per_sec:.0f} pgs/s) ✓")
+            print(f"   -> [{file_index}/{total_files}] {pdf_file.file_name} ({total_pages} pgs): {records_saved} TMs in {elapsed:.2f}s ({pages_per_sec:.0f} pgs/s) [OK]")
             
             if progress_callback:
                 progress_callback({
@@ -130,7 +130,7 @@ class PDFExtractor:
                     self.db.commit()
             except Exception:
                 pass
-            print(f"   ↳ [ERROR] Failed extracting {pdf_file.file_name}: {str(e)}")
+            print(f"   -> [ERROR] Failed extracting {pdf_file.file_name}: {str(e)}")
             return 0
     
     def _process_pdf_fast(self, pdf_file: PDFFile) -> tuple[List[Dict], int]:
@@ -244,7 +244,7 @@ class PDFExtractor:
     
     def _parse_page_text(self, text: str, page_num: int) -> Optional[Dict]:
         """
-        Parse text of a single page to extract trademark application details
+        Parse text of a single page to extract trademark application details with high precision
         """
         if not text:
             return None
@@ -269,45 +269,74 @@ class PDFExtractor:
         app_num = app_match.group(1)
         filing_date = self._parse_date(app_match.group(2))
         
-        # Class number
+        # 1. Class number detection from top header lines
         class_num = None
-        header_class = re.search(r'Class\s+(\d+)', lines[0], re.IGNORECASE)
-        if header_class:
-            class_num = int(header_class.group(1))
+        for line in lines[:min(6, len(lines))]:
+            m_cls = re.search(r'\bClass\s+(\d+)\b', line, re.IGNORECASE)
+            if m_cls:
+                class_num = int(m_cls.group(1))
+                break
             
-        # Trademark Word Mark (if present before application number)
-        trademark_name = None
-        priority_info = []
-        if app_idx > 1:
-            tm_lines = []
-            for l in lines[1:app_idx]:
-                # Filter out priority claims, journal headers, numbers
-                if re.search(r'Priority\s+claimed', l, re.IGNORECASE) or re.search(r'Application\s*No\.?\s*:', l, re.IGNORECASE):
-                    priority_info.append(l)
+        # 2. Priority info & Word Mark extraction from lines before application number
+        priority_parts = []
+        tm_lines = []
+        is_in_priority = False
+        
+        for l in lines[:app_idx]:
+            # Filter out journal header lines and page numbers
+            if re.search(r'Trade\s*Marks?\s*Journal', l, re.IGNORECASE) or re.search(r'International\s+Registration\s+designating\s+India', l, re.IGNORECASE):
+                continue
+            if re.match(r'^\d+$', l):
+                continue
+            if re.match(r'^Class\s+\d+$', l, re.IGNORECASE):
+                continue
+                
+            # Detect priority claim lines (can span multiple lines)
+            if re.search(r'Priority\s+claimed', l, re.IGNORECASE):
+                is_in_priority = True
+                priority_parts.append(l)
+                continue
+                
+            if is_in_priority:
+                if re.search(r'Application\s*No\.?\s*:', l, re.IGNORECASE) or re.match(r'^[;\s\w\.\-]+$', l) or re.match(r'^\d+$', l):
+                    priority_parts.append(l)
+                    if ';' in l or re.search(r'\b(Union|America|States|Germany|France|Japan|Italy|China|Kingdom|India|Canada|Australia|Spain|Switzerland)\b', l, re.IGNORECASE):
+                        is_in_priority = False
                     continue
-                if re.search(r'Trade\s*Marks?\s*Journal', l, re.IGNORECASE) or re.match(r'^\d+$', l):
-                    continue
-                tm_lines.append(l)
-            if tm_lines:
-                trademark_name = " ".join(tm_lines).strip()
+                else:
+                    is_in_priority = False
+                    
+            if re.search(r'Application\s*No\.?\s*:', l, re.IGNORECASE):
+                priority_parts.append(l)
+                continue
+                
+            tm_lines.append(l)
             
+        trademark_name = " ".join(tm_lines).strip() if tm_lines else None
+        priority_str = " ".join(priority_parts).strip() if priority_parts else None
+            
+        # 3. Parse lines after application number
         after_lines = lines[app_idx + 1:]
         applicant_name = None
         applicant_address = []
         applicant_type = None
         attorney_name = None
         attorney_address = []
-        associated_with = None
+        associated_with_parts = []
+        
+        if priority_str:
+            associated_with_parts.append(f"Priority: {priority_str}")
+            
         used_since = None
         office_location = None
         goods_services = []
         
         state = "APPLICANT"
         type_keywords = [
-            'INDIVIDUAL', 'PARTNERSHIP', 'PRIVATE LIMITED', 'LIMITED COMPANY', 
-            'LLP', 'PROPRIETORSHIP', 'BODY INCORPORATE', 'HUF', 'SOLE PROPRIETOR',
-            'PARTNERSHIP FIRM', 'COMPANY', 'SOCIETY', 'TRUST', 'GMBH', 'INC',
-            'CORPORATION', 'LIMITED', 'LTD'
+            'INDIVIDUAL', 'PARTNERSHIP FIRM', 'PARTNERSHIP', 'PRIVATE LIMITED', 'LIMITED COMPANY', 
+            'LLP', 'PROPRIETORSHIP FIRM', 'PROPRIETORSHIP', 'BODY INCORPORATE', 'HUF', 'SOLE PROPRIETOR',
+            'COMPANY', 'SOCIETY', 'TRUST', 'GMBH', 'INC', 'CORPORATION', 'LIMITED', 'LTD', 
+            'JOINT APPLICANT', 'SINGLE FIRM', 'S.P.A.', 'S.R.L.', 'A.G.', 'B.V.'
         ]
         cities = ['MUMBAI', 'DELHI', 'KOLKATA', 'CHENNAI', 'AHMEDABAD']
         
@@ -316,9 +345,13 @@ class PDFExtractor:
                 continue
 
             # Capture International Registration No.
-            intl_match = re.search(r'\[International Registration No\.\s*:\s*([^\]]+)\]', line, re.IGNORECASE)
+            intl_match = re.search(r'\[?International Registration No\.?\s*:\s*([^\]\)]+)\]?', line, re.IGNORECASE)
             if intl_match:
-                associated_with = f"IR No: {intl_match.group(1).strip()}"
+                associated_with_parts.append(f"IR No: {intl_match.group(1).strip()}")
+                continue
+                
+            if re.search(r'Priority\s+claimed', line, re.IGNORECASE):
+                associated_with_parts.append(f"Priority: {line}")
                 continue
                 
             if re.search(r'Address for service in India/(Attorney|Agents)\s*address:', line, re.IGNORECASE):
@@ -341,17 +374,19 @@ class PDFExtractor:
                 continue
                 
             if state == "APPLICANT":
+                if line.startswith("IR DIVISION") or "International Registration" in line:
+                    continue
                 if not applicant_name:
                     applicant_name = line
-                    # Auto-detect entity type from applicant name
-                    for kw in ['GMBH', 'INC', 'CORP', 'CORPORATION', 'AG', 'SARL', 'B.V.', 'LIMITED', 'LTD', 'PVT LTD', 'PRIVATE LIMITED', 'LLP']:
+                    # Auto-detect entity type from applicant name with word boundaries
+                    for kw in ['GMBH', 'INC', 'CORP', 'CORPORATION', 'AG', 'SARL', 'B.V.', 'LIMITED', 'LTD', 'PVT LTD', 'PRIVATE LIMITED', 'LLP', 'S.P.A.', 'S.R.L.', 'S.A.']:
                         if re.search(rf'\b{re.escape(kw)}\b', line, re.IGNORECASE):
-                            applicant_type = 'Company / Body Incorporate' if kw in ['GMBH', 'INC', 'CORP', 'CORPORATION', 'AG', 'SARL', 'B.V.'] else kw.title()
+                            applicant_type = 'Company / Body Incorporate' if kw in ['GMBH', 'INC', 'CORP', 'CORPORATION', 'AG', 'SARL', 'B.V.', 'S.P.A.', 'S.R.L.', 'S.A.'] else kw.title()
                             break
                 else:
                     is_type = False
                     for kw in type_keywords:
-                        if kw in line.upper():
+                        if re.search(rf'\b{re.escape(kw)}\b', line, re.IGNORECASE) or re.search(r'^(A\s+Corporation|A\s+Company|Registered under)', line, re.IGNORECASE):
                             applicant_type = line
                             is_type = True
                             break
@@ -378,10 +413,22 @@ class PDFExtractor:
             elif state == "GOODS":
                 if line.startswith("IR DIVISION"):
                     continue
+                if not class_num:
+                    m_cl = re.search(r'\bCl(?:ass)?\.?\s*(\d+)\b', line, re.IGNORECASE)
+                    if m_cl:
+                        class_num = int(m_cl.group(1))
                 if not line.startswith("IT IS A CONDITION") and not line.startswith("THIS IS SUBJECT TO"):
                     goods_services.append(line)
 
-        # If trademark_name is empty (e.g. Device / Logo mark), determine clean mark
+        # 4. Fallback for class number from goods & services
+        if not class_num and goods_services:
+            for g in goods_services[:5]:
+                m_cl = re.search(r'\bCl(?:ass)?\.?\s*(\d+)\b', g, re.IGNORECASE)
+                if m_cl:
+                    class_num = int(m_cl.group(1))
+                    break
+
+        # 5. If trademark_name is empty (e.g. Device / Logo mark), determine clean mark
         if not trademark_name:
             if applicant_name:
                 is_person = bool(re.match(r'^(MR\.?|MRS\.?|MS\.?|SH\.?|SHRI|SMT\.?|DR\.?|M\/S\.?)\b', applicant_name, re.IGNORECASE)) or (applicant_type == 'INDIVIDUAL')
@@ -389,11 +436,11 @@ class PDFExtractor:
                     trademark_name = "DEVICE MARK"
                 else:
                     clean_brand = re.sub(
-                        r'\b(GMBH|INC\.?|CORP\.?|CORPORATION|AG|S\.?A\.?|SARL|B\.?V\.?|LIMITED|LTD\.?|PVT\.?\s+LTD\.?|PRIVATE\s+LIMITED|LLP|COMPANY|CO\.)\b',
+                        r'\b(LIMITED LIABILITY COMPANY|LLC|GMBH|INC\.?|CORP\.?|CORPORATION|AG|S\.?A\.?|SARL|B\.?V\.?|LIMITED|LTD\.?|PVT\.?\s+LTD\.?|PRIVATE\s+LIMITED|LLP|COMPANY|CO\.?|S\.?P\.?A\.?|S\.?R\.?L\.?)\b',
                         '',
                         applicant_name,
                         flags=re.IGNORECASE
-                    ).strip(' ,.-')
+                    ).strip(' ,.-&')
                     trademark_name = clean_brand or "DEVICE MARK"
             else:
                 trademark_name = "DEVICE MARK"
@@ -408,7 +455,7 @@ class PDFExtractor:
             "class_number": class_num,
             "attorney_name": attorney_name,
             "attorney_address": ", ".join(attorney_address) if attorney_address else None,
-            "associated_with": associated_with,
+            "associated_with": " | ".join(associated_with_parts) if associated_with_parts else None,
             "used_since": used_since,
             "office_location": office_location,
             "goods_services": " ".join(goods_services) if goods_services else None,
@@ -442,7 +489,7 @@ class PDFExtractor:
         
         total_pending = len(pending_pdfs)
         print(f"\n========================================================")
-        print(f" [3/3] ⚡ Fast-Extracting Trademarks from {total_pending} PDFs...")
+        print(f" [3/3] [+] Fast-Extracting Trademarks from {total_pending} PDFs...")
         print(f"========================================================")
         
         if progress_callback:
@@ -469,7 +516,7 @@ class PDFExtractor:
                 stats['errors'] += 1
                 
         total_time = time.time() - t0
-        print(f"\n[✓] Fast Extraction Complete: {stats['records']:,} trademarks extracted from {stats['processed']}/{total_pending} PDFs in {total_time:.1f}s")
+        print(f"\n[+] Fast Extraction Complete: {stats['records']:,} trademarks extracted from {stats['processed']}/{total_pending} PDFs in {total_time:.1f}s")
         
         if progress_callback:
             progress_callback({

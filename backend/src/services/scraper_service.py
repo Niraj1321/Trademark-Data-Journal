@@ -52,7 +52,7 @@ class TrademarkScraper:
             })
             
         print(f"\n========================================================")
-        print(f" [1/3] 🌐 Connecting to IP India Trademark Journal Portal...")
+        print(f" [1/3] [*] Connecting to IP India Trademark Journal Portal...")
         print(f"========================================================")
         
         start_total = time.time()
@@ -70,7 +70,7 @@ class TrademarkScraper:
             if resp.status_code == 200 and "table" in resp.text.lower():
                 journal_data = self._extract_table_data_bs4(resp.text, max_journals)
                 if journal_data:
-                    print(f"[✓] Direct HTTP fast-fetch retrieved {len(journal_data)} journals in {time.time() - start_total:.2f}s")
+                    print(f"[+] Direct HTTP fast-fetch retrieved {len(journal_data)} journals in {time.time() - start_total:.2f}s")
         except Exception as e:
             print(f"[WARN] Direct HTTP fetch failed ({e}), falling back to headless browser...")
 
@@ -96,7 +96,7 @@ class TrademarkScraper:
                 finally:
                     browser.close()
                     
-        print(f"[✓] Successfully retrieved {len(journal_data)} journal entries from portal")
+        print(f"[+] Successfully retrieved {len(journal_data)} journal entries from portal")
         
         if progress_callback:
             progress_callback({
@@ -443,7 +443,7 @@ class TrademarkScraper:
             
             total_count = len(pdf_forms)
             print(f"\n========================================================")
-            print(f" [2/3] 📥 Downloading {total_count} PDFs in Parallel (Journal #{journal.journal_number})...")
+            print(f" [2/3] [+] Downloading {total_count} PDFs in Parallel (Journal #{journal.journal_number})...")
             print(f"========================================================")
             
             if progress_callback:
@@ -491,9 +491,9 @@ class TrademarkScraper:
                     if result:
                         downloaded_count += 1
                         size_mb = result["file_size_bytes"] / (1024 * 1024)
-                        status_tag = "✓ Cached" if result["status"] == "cached" else f"✓ Downloaded ({result.get('elapsed', 0):.1f}s)"
+                        status_tag = "[OK] Cached" if result["status"] == "cached" else f"[OK] Downloaded ({result.get('elapsed', 0):.1f}s)"
                         
-                        print(f"   ↳ [{downloaded_count}/{total_count} ({int(downloaded_count/total_count*100)}%)] {result['file_name']} ({size_mb:.1f} MB) - {status_tag}")
+                        print(f"   -> [{downloaded_count}/{total_count} ({int(downloaded_count/total_count*100)}%)] {result['file_name']} ({size_mb:.1f} MB) - {status_tag}")
                         
                         # Check/save to database
                         existing_pdf = self.db.query(PDFFile).filter(
@@ -535,7 +535,7 @@ class TrademarkScraper:
                 journal.error_message = "No PDFs downloaded"
             self.db.commit()
             
-            print(f"[✓] Parallel Download Done: {downloaded_count}/{total_count} PDFs saved for Journal #{journal.journal_number}")
+            print(f"[+] Parallel Download Done: {downloaded_count}/{total_count} PDFs saved for Journal #{journal.journal_number}")
             
             if progress_callback:
                 progress_callback({

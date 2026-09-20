@@ -191,6 +191,13 @@ export default function TrademarkDetail() {
                 <p className="text-sm font-bold text-slate-900 mt-1">{tm.office_location}</p>
               </div>
             )}
+
+            {tm.associated_with && (
+              <div className="p-3.5 bg-amber-50/80 rounded-xl border border-amber-200/80 sm:col-span-2">
+                <p className="text-[11px] font-bold text-amber-800 uppercase tracking-wider">Priority Claim & International Registration</p>
+                <p className="text-sm font-semibold text-amber-950 mt-1">{tm.associated_with}</p>
+              </div>
+            )}
           </div>
         </div>
       </div>

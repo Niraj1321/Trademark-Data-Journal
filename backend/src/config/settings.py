@@ -5,6 +5,11 @@ from pydantic_settings import BaseSettings
 from typing import List
 
 
+from pathlib import Path
+_backend_dir = Path(__file__).resolve().parent.parent.parent
+_env_file = str(_backend_dir / ".env") if (_backend_dir / ".env").exists() else ".env"
+
+
 class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = "mysql+pymysql://root:password@localhost:3306/trademark_db"
@@ -40,7 +45,7 @@ class Settings(BaseSettings):
     ALLOWED_ORIGINS: List[str] = ["http://localhost:5173", "http://localhost:3000"]
     
     model_config = {
-        "env_file": ".env",
+        "env_file": _env_file,
         "extra": "ignore",
         "case_sensitive": True,
     }

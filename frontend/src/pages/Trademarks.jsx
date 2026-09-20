@@ -439,6 +439,11 @@ export default function Trademarks() {
                                 Used: {tm.used_since}
                               </span>
                             )}
+                            {tm.associated_with && (
+                              <span className="text-[10px] text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200/80 font-medium truncate max-w-[200px]" title={tm.associated_with}>
+                                {tm.associated_with.includes('IR No:') ? tm.associated_with.match(/IR No:\s*[^|]+/)?.[0] || 'IR Designated' : 'Priority Claimed'}
+                              </span>
+                            )}
                           </div>
                         </td>
 

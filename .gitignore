@@ -33,12 +33,20 @@ dist/
 Thumbs.db
 
 # Project specific
+downloads/
 backend/downloads/*
 !backend/downloads/.gitkeep
+backend/downloads/images/*
+!backend/downloads/images/.gitkeep
 *.pdf
 *.log
+*.tmp
+*.zip
 
 # Environment
 .env
 .env.local
 .env.production
+backend/.env
+backend/.env.local
+backend/.env.production

@@ -39,6 +39,56 @@ async def lifespan(app: FastAPI):
                     print("[+] Schema verified: 'image_path' column exists.")
             except Exception as schema_err:
                 print(f"[-] Schema migration notice: {schema_err}")
+                
+        # Auto-clean contaminated records on startup
+        try:
+            from src.config.database import SessionLocal
+            from src.models.models import TrademarkApplication
+            from src.services.pdf_extractor_service import PDFExtractor
+            
+            db_init = SessionLocal()
+            try:
+                corrupted_count = db_init.query(TrademarkApplication).filter(
+                    (TrademarkApplication.trademark_name.like('Priority claimed%')) |
+                    (TrademarkApplication.trademark_name.like('Application No%')) |
+                    (TrademarkApplication.applicant_name.like('[International%'))
+                ).count()
+                
+                if corrupted_count > 0:
+                    print(f"[+] Found {corrupted_count} legacy corrupted records. Auto-repairing...")
+                    extractor = PDFExtractor(db_init)
+                    corrupted = db_init.query(TrademarkApplication).filter(
+                        (TrademarkApplication.trademark_name.like('Priority claimed%')) |
+                        (TrademarkApplication.trademark_name.like('Application No%')) |
+                        (TrademarkApplication.applicant_name.like('[International%'))
+                    ).all()
+                    for tm in corrupted:
+                        if tm.raw_text:
+                            parsed = extractor._parse_page_text(tm.raw_text, tm.page_number or 1)
+                            if parsed:
+                                tm.trademark_name = parsed["trademark_name"]
+                                tm.applicant_name = parsed["applicant_name"]
+                                tm.applicant_address = parsed["applicant_address"]
+                                tm.applicant_type = parsed["applicant_type"]
+                                if parsed.get("class_number"):
+                                    tm.class_number = parsed["class_number"]
+                                if parsed.get("associated_with"):
+                                    tm.associated_with = parsed["associated_with"]
+                                if parsed.get("used_since"):
+                                    tm.used_since = parsed["used_since"]
+                                if parsed.get("goods_services"):
+                                    tm.goods_services = parsed["goods_services"]
+                                if parsed.get("office_location"):
+                                    tm.office_location = parsed["office_location"]
+                    db_init.commit()
+                    print(f"[✓] Repaired {corrupted_count} trademark records successfully!")
+            except Exception as e_clean:
+                db_init.rollback()
+                print(f"[-] Auto-clean notice: {e_clean}")
+            finally:
+                db_init.close()
+        except Exception:
+            pass
     except Exception as e:
         print(f"[-] Warning: Database initialization failed: {e}")
         print("[-] Server will continue running, but database features may fail until connection is fixed.")
@@ -136,75 +186,48 @@ async def run_db_migration():
             results.append({"action": "verified office_location column"})
                 
             # 4. Auto-clean existing contaminated trademark records (Priority claimed / International Reg headers)
-            import re
-            from backend.src.config.database import SessionLocal
-            from backend.src.models.models import TrademarkApplication
+            from src.config.database import SessionLocal
+            from src.models.models import TrademarkApplication
+            from src.services.pdf_extractor_service import PDFExtractor
             
             db = SessionLocal()
             try:
+                extractor = PDFExtractor(db)
                 contaminated = db.query(TrademarkApplication).filter(
                     (TrademarkApplication.trademark_name.like('Priority claimed%')) |
-                    (TrademarkApplication.applicant_name.like('[International%'))
+                    (TrademarkApplication.trademark_name.like('Application No%')) |
+                    (TrademarkApplication.trademark_name.like(';%')) |
+                    (TrademarkApplication.applicant_name.like('[International%')) |
+                    (TrademarkApplication.applicant_name.like('International Registration%'))
                 ).all()
                 
                 cleaned_records = []
                 for tm in contaminated:
-                    raw = tm.raw_text or ""
-                    lines = [l.strip() for l in raw.split('\n') if l.strip()]
-                    
-                    for idx, line in enumerate(lines):
-                        intl_m = re.search(r'\[International Registration No\.\s*:\s*([^\]]+)\]', line, re.IGNORECASE)
-                        if intl_m:
-                            tm.associated_with = f"IR No: {intl_m.group(1).strip()}"
-                            if idx + 1 < len(lines):
-                                next_line = lines[idx + 1]
-                                if not re.search(r'Used Since|Proposed to be Used|IR DIVISION', next_line, re.IGNORECASE):
-                                    tm.applicant_name = next_line
-                                    
-                                    # Detect entity type
-                                    for kw in ['GMBH', 'INC', 'CORP', 'CORPORATION', 'AG', 'SARL', 'B.V.', 'LIMITED', 'LTD', 'PVT LTD', 'PRIVATE LIMITED', 'LLP']:
-                                        if re.search(rf'\b{re.escape(kw)}\b', next_line, re.IGNORECASE):
-                                            tm.applicant_type = 'Company / Body Incorporate' if kw in ['GMBH', 'INC', 'CORP', 'CORPORATION', 'AG', 'SARL', 'B.V.'] else kw.title()
-                                            break
-                                            
-                                    # Clean trademark name
-                                    clean_brand = re.sub(
-                                        r'\b(GMBH|INC\.?|CORP\.?|CORPORATION|AG|S\.?A\.?|SARL|B\.?V\.?|LIMITED|LTD\.?|PVT\.?\s+LTD\.?|PRIVATE\s+LIMITED|LLP|COMPANY|CO\.)\b',
-                                        '',
-                                        next_line,
-                                        flags=re.IGNORECASE
-                                    ).strip(' ,.-')
-                                    if clean_brand:
-                                        tm.trademark_name = clean_brand
-                                    break
-                    
-                    if tm.goods_services and tm.goods_services.startswith("IR DIVISION"):
-                        tm.goods_services = tm.goods_services.replace("IR DIVISION", "", 1).strip()
-                        
-                    cleaned_records.append({"id": tm.id, "app_no": tm.application_number, "fixed_name": tm.trademark_name, "applicant": tm.applicant_name})
-                    
-                # Clean individual person names mistakenly set as trademark_name for device marks
-                person_records = db.query(TrademarkApplication).filter(
-                    (TrademarkApplication.trademark_name == TrademarkApplication.applicant_name) &
-                    ((TrademarkApplication.applicant_type == 'INDIVIDUAL') | 
-                     (TrademarkApplication.applicant_name.like('MR.%')) | 
-                     (TrademarkApplication.applicant_name.like('MRS.%')) | 
-                     (TrademarkApplication.applicant_name.like('MS.%')) | 
-                     (TrademarkApplication.applicant_name.like('SHRI%')) | 
-                     (TrademarkApplication.applicant_name.like('SMT.%')))
-                ).all()
-
-                for tm in person_records:
-                    raw = tm.raw_text or ""
-                    lines = [l.strip() for l in raw.split('\n') if l.strip()]
-                    app_idx = -1
-                    for idx, line in enumerate(lines):
-                        if re.search(r'(\b\d{7,10}\b)\s+(\d{2}/\d{2}/\d{4})', line):
-                            app_idx = idx
-                            break
-                    if app_idx <= 1:
-                        tm.trademark_name = "DEVICE MARK"
-                        cleaned_records.append({"id": tm.id, "app_no": tm.application_number, "fixed_name": "DEVICE MARK", "applicant": tm.applicant_name})
+                    if tm.raw_text:
+                        parsed = extractor._parse_page_text(tm.raw_text, tm.page_number or 1)
+                        if parsed:
+                            tm.trademark_name = parsed["trademark_name"]
+                            tm.applicant_name = parsed["applicant_name"]
+                            tm.applicant_address = parsed["applicant_address"]
+                            tm.applicant_type = parsed["applicant_type"]
+                            if parsed.get("class_number"):
+                                tm.class_number = parsed["class_number"]
+                            if parsed.get("associated_with"):
+                                tm.associated_with = parsed["associated_with"]
+                            if parsed.get("used_since"):
+                                tm.used_since = parsed["used_since"]
+                            if parsed.get("goods_services"):
+                                tm.goods_services = parsed["goods_services"]
+                            if parsed.get("office_location"):
+                                tm.office_location = parsed["office_location"]
+                                
+                            cleaned_records.append({
+                                "id": tm.id,
+                                "app_no": tm.application_number,
+                                "fixed_name": tm.trademark_name,
+                                "applicant": tm.applicant_name,
+                                "class": tm.class_number
+                            })
                     
                 db.commit()
                 results.append({"action": f"Cleaned {len(cleaned_records)} corrupted trademark records", "cleaned": cleaned_records[:10]})
