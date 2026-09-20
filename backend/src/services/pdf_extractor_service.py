@@ -529,50 +529,58 @@ class PDFExtractor:
     def _generate_wordmark_image(trademark_name: str, app_number: str = "", class_number: Optional[int] = None):
         """
         Generate a clean, high-resolution visual specimen card for Word Mark (text) trademarks
+        with bold, prominent typography that looks great in previews and exports.
         """
         from PIL import Image, ImageDraw, ImageFont
         
-        width, height = 1200, 600
+        def _get_font(size: int, bold: bool = False):
+            font_names = [
+                'arialbd.ttf' if bold else 'arial.ttf',
+                'DejaVuSans-Bold.ttf' if bold else 'DejaVuSans.ttf',
+                'LiberationSans-Bold.ttf' if bold else 'LiberationSans-Regular.ttf',
+                'FreeSansBold.ttf' if bold else 'FreeSans.ttf',
+                '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf' if bold else '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+                '/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf' if bold else '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',
+                '/usr/share/fonts/truetype/freefont/FreeSansBold.ttf' if bold else '/usr/share/fonts/truetype/freefont/FreeSans.ttf',
+            ]
+            for fn in font_names:
+                try:
+                    return ImageFont.truetype(fn, size)
+                except Exception:
+                    continue
+            try:
+                return ImageFont.load_default(size=size)
+            except Exception:
+                return ImageFont.load_default()
+        
+        width, height = 800, 400
         img = Image.new('RGB', (width, height), color=(255, 255, 255))
         draw = ImageDraw.Draw(img)
         
         # High-res outer border
-        draw.rectangle([(20, 20), (width - 21, height - 21)], outline=(218, 225, 233), width=3)
-        draw.rectangle([(28, 28), (width - 29, height - 29)], outline=(241, 245, 249), width=1)
+        draw.rectangle([(16, 16), (width - 17, height - 17)], outline=(226, 232, 240), width=2)
+        draw.rectangle([(22, 22), (width - 23, height - 23)], outline=(241, 245, 249), width=1)
         
         # Top badge: 'TRADE MARK (WORD MARK SPECIMEN)' • CLASS XX
-        header_text = 'TRADE MARK (WORD MARK SPECIMEN)'
+        header_text = 'TRADE MARK SPECIMEN (WORD MARK)'
         if class_number:
             header_text += f' • CLASS {class_number}'
             
-        try:
-            font_header = ImageFont.truetype('arialbd.ttf', 24)
-            font_footer = ImageFont.truetype('arial.ttf', 22)
-        except Exception:
-            font_header = ImageFont.load_default()
-            font_footer = ImageFont.load_default()
-            
-        draw.text((45, 42), header_text, fill=(100, 116, 139), font=font_header)
+        font_header = _get_font(18, bold=True)
+        draw.text((40, 36), header_text, fill=(100, 116, 139), font=font_header)
         
-        # Main trademark text (auto-fit to 1200x600 box)
+        # Main trademark text (bold and prominent)
         clean_name = trademark_name.strip() if trademark_name else "WORD MARK"
-        font_size = 96
+        font_size = 90
         font = None
-        while font_size >= 24:
-            try:
-                font = ImageFont.truetype('arialbd.ttf', font_size)
-            except Exception:
-                try:
-                    font = ImageFont.truetype('arial.ttf', font_size)
-                except Exception:
-                    font = ImageFont.load_default()
-                    break
+        while font_size >= 28:
+            font = _get_font(font_size, bold=True)
             bbox = draw.textbbox((0, 0), clean_name, font=font)
             text_w = bbox[2] - bbox[0]
             text_h = bbox[3] - bbox[1]
-            if text_w <= width - 120 and text_h <= height - 200:
+            if text_w <= width - 100 and text_h <= height - 150:
                 break
-            font_size -= 6
+            font_size -= 4
             
         bbox = draw.textbbox((0, 0), clean_name, font=font)
         text_w = bbox[2] - bbox[0]
@@ -585,7 +593,8 @@ class PDFExtractor:
         # Bottom footer info
         if app_number:
             bottom_text = f'Application No: {app_number}'
-            draw.text((45, height - 65), bottom_text, fill=(148, 163, 184), font=font_footer)
+            font_footer = _get_font(16, bold=False)
+            draw.text((40, height - 56), bottom_text, fill=(148, 163, 184), font=font_footer)
             
         return img
     
