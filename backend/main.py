@@ -20,10 +20,25 @@ async def lifespan(app: FastAPI):
     # Startup
     print("[+] Starting Trademark Journal Scraper API...")
     
-    # Create database tables
+    # Create database tables and ensure schema columns exist
     try:
         Base.metadata.create_all(bind=engine)
         print("[+] Database tables created/verified")
+        
+        # Auto-migrate schema on startup for cloud databases
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            try:
+                col_check = conn.execute(text("SHOW COLUMNS FROM trademark_applications LIKE 'image_path'")).fetchone()
+                if not col_check:
+                    print("[+] Adding missing 'image_path' column to trademark_applications...")
+                    conn.execute(text("ALTER TABLE trademark_applications ADD COLUMN image_path VARCHAR(500) NULL AFTER page_number"))
+                    conn.commit()
+                    print("[+] Column 'image_path' added successfully!")
+                else:
+                    print("[+] Schema verified: 'image_path' column exists.")
+            except Exception as schema_err:
+                print(f"[-] Schema migration notice: {schema_err}")
     except Exception as e:
         print(f"[-] Warning: Database initialization failed: {e}")
         print("[-] Server will continue running, but database features may fail until connection is fixed.")
