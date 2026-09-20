@@ -50,24 +50,15 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS middleware
-origins = settings.ALLOWED_ORIGINS
-if "*" in origins or (len(origins) == 1 and origins[0] == "*"):
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origin_regex=r"^https?:\/\/.*",
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-else:
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+# CORS middleware - allows all origins, headers and methods
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=r"^https?:\/\/.*",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+)
 
 from pathlib import Path
 from fastapi.staticfiles import StaticFiles
