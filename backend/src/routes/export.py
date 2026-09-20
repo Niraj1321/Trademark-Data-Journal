@@ -4,7 +4,7 @@ Excel and ZIP export routes
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Optional, Generator
 from datetime import datetime
 
 from ..config.database import get_db
@@ -15,8 +15,29 @@ from ..models.models import Journal
 router = APIRouter()
 
 
+def stream_file(file_obj, chunk_size: int = 65536) -> Generator[bytes, None, None]:
+    """
+    Safely stream file-like objects in 64KB binary chunks.
+    Prevents Python from doing readline() on binary ZIP archives which causes high memory spikes and timeouts.
+    """
+    try:
+        if hasattr(file_obj, 'seek'):
+            file_obj.seek(0)
+        while True:
+            chunk = file_obj.read(chunk_size)
+            if not chunk:
+                break
+            yield chunk
+    finally:
+        if hasattr(file_obj, 'close'):
+            try:
+                file_obj.close()
+            except Exception:
+                pass
+
+
 @router.get("/export/by-journal")
-async def export_by_journal(
+def export_by_journal(
     journal_ids: Optional[str] = Query(None, description="Comma-separated journal IDs"),
     format: str = Query("zip", description="Export format: 'zip' (with images) or 'xlsx' (excel only)"),
     db: Session = Depends(get_db)
@@ -43,20 +64,20 @@ async def export_by_journal(
         media_type = "application/zip"
     
     return StreamingResponse(
-        file_obj,
+        stream_file(file_obj),
         media_type=media_type,
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
 
 
 @router.get("/export/all")
-async def export_all_trademarks(
+def export_all_trademarks(
     journal_number: Optional[str] = None,
     class_number: Optional[int] = None,
     application_number: Optional[str] = None,
     office_location: Optional[str] = None,
     search: Optional[str] = None,
-    format: str = Query("zip", description="Export format: 'zip' (with images) or 'xlsx' (excel only)"),
+    format: str = Query("xlsx", description="Export format: 'xlsx' (excel only, fast) or 'zip' (with images)"),
     db: Session = Depends(get_db)
 ):
     """
@@ -93,14 +114,14 @@ async def export_all_trademarks(
         media_type = "application/zip"
     
     return StreamingResponse(
-        file_obj,
+        stream_file(file_obj),
         media_type=media_type,
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
 
 
 @router.get("/export/journal/{journal_id}/by-pdf")
-async def export_journal_by_pdf(
+def export_journal_by_pdf(
     journal_id: int,
     format: str = Query("zip", description="Export format: 'zip' (with images) or 'xlsx' (excel only)"),
     db: Session = Depends(get_db)
@@ -132,7 +153,7 @@ async def export_journal_by_pdf(
         media_type = "application/zip"
     
     return StreamingResponse(
-        file_obj,
+        stream_file(file_obj),
         media_type=media_type,
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )

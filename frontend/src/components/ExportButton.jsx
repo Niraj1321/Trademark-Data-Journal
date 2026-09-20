@@ -9,7 +9,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 export default function ExportButton({ type, filters, journalId, journalIds }) {
   const [isExporting, setIsExporting] = useState(false)
   const [showDropdown, setShowDropdown] = useState(false)
-  const [selectedFormat, setSelectedFormat] = useState('zip') // 'zip' (Excel + Images) | 'xlsx' (Excel Only) | 'images' (Images Only)
+  const [selectedFormat, setSelectedFormat] = useState('xlsx') // 'zip' (Excel + Images) | 'xlsx' (Excel Only) | 'images' (Images Only)
   const [secondsElapsed, setSecondsElapsed] = useState(0)
   const [statusStage, setStatusStage] = useState('')
   const [isCompleted, setIsCompleted] = useState(false)
