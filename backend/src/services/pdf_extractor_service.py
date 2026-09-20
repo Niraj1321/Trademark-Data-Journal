@@ -528,8 +528,8 @@ class PDFExtractor:
     @staticmethod
     def _generate_wordmark_image(trademark_name: str, app_number: str = "", class_number: Optional[int] = None):
         """
-        Generate a clean, high-resolution visual specimen card for Word Mark (text) trademarks
-        with bold, prominent typography that looks great in previews and exports.
+        Generate a clean trademark logo plate for Word Mark (text) trademarks
+        with prominent bold typography. Header text, footer app numbers, and borders are removed.
         """
         from PIL import Image, ImageDraw, ImageFont
         
@@ -557,28 +557,16 @@ class PDFExtractor:
         img = Image.new('RGB', (width, height), color=(255, 255, 255))
         draw = ImageDraw.Draw(img)
         
-        # High-res outer border
-        draw.rectangle([(16, 16), (width - 17, height - 17)], outline=(226, 232, 240), width=2)
-        draw.rectangle([(22, 22), (width - 23, height - 23)], outline=(241, 245, 249), width=1)
-        
-        # Top badge: 'TRADE MARK (WORD MARK SPECIMEN)' • CLASS XX
-        header_text = 'TRADE MARK SPECIMEN (WORD MARK)'
-        if class_number:
-            header_text += f' • CLASS {class_number}'
-            
-        font_header = _get_font(18, bold=True)
-        draw.text((40, 36), header_text, fill=(100, 116, 139), font=font_header)
-        
-        # Main trademark text (bold and prominent)
+        # Main trademark text (bold, prominent, and centered - no header, no footer tags)
         clean_name = trademark_name.strip() if trademark_name else "WORD MARK"
-        font_size = 90
+        font_size = 96
         font = None
-        while font_size >= 28:
+        while font_size >= 24:
             font = _get_font(font_size, bold=True)
             bbox = draw.textbbox((0, 0), clean_name, font=font)
             text_w = bbox[2] - bbox[0]
             text_h = bbox[3] - bbox[1]
-            if text_w <= width - 100 and text_h <= height - 150:
+            if text_w <= width - 80 and text_h <= height - 80:
                 break
             font_size -= 4
             
@@ -589,13 +577,6 @@ class PDFExtractor:
         y = (height - text_h) // 2 - bbox[1]
         
         draw.text((x, y), clean_name, fill=(15, 23, 42), font=font)
-        
-        # Bottom footer info
-        if app_number:
-            bottom_text = f'Application No: {app_number}'
-            font_footer = _get_font(16, bold=False)
-            draw.text((40, height - 56), bottom_text, fill=(148, 163, 184), font=font_footer)
-            
         return img
     
     def extract_all_pending(

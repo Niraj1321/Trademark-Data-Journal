@@ -312,6 +312,44 @@ async def run_db_migration():
         return {"status": "error", "error": str(e), "results": results}
 
 
+@app.get("/api/refresh-wordmarks")
+async def refresh_wordmarks(force: bool = True):
+    """Regenerate all wordmark images with the clean design (no header or footer tags)"""
+    from src.config.database import SessionLocal
+    from src.models.models import TrademarkApplication
+    from src.services.pdf_extractor_service import PDFExtractor
+    import re
+
+    db = SessionLocal()
+    try:
+        extractor = PDFExtractor(db)
+        download_dir = Path(settings.DOWNLOAD_DIR)
+        
+        trademarks = db.query(TrademarkApplication).all()
+        regenerated = 0
+        for tm in trademarks:
+            if tm.image_path and tm.image_path.endswith('.jpg'):
+                journal_no = str(tm.journal.journal_number) if tm.journal and tm.journal.journal_number else 'general'
+                images_dir = download_dir / 'images' / journal_no
+                images_dir.mkdir(parents=True, exist_ok=True)
+                app_clean = re.sub(r'[^\w\-]', '_', str(tm.application_number))
+                target_img = images_dir / f'{app_clean}.jpg'
+                
+                img = extractor._generate_wordmark_image(
+                    trademark_name=tm.trademark_name or 'WORD MARK',
+                    app_number=str(tm.application_number),
+                    class_number=tm.class_number
+                )
+                img.save(target_img, 'JPEG', quality=95, optimize=True)
+                regenerated += 1
+                
+        return {"status": "success", "regenerated": regenerated}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+    finally:
+        db.close()
+
+
 if __name__ == "__main__":
     uvicorn.run(
         "main:app",
