@@ -30,6 +30,48 @@ const getImageUrl = (pathOrUrl) => {
 const POPULAR_CLASSES = [5, 9, 30, 35, 41, 42]
 const OFFICES = ['Mumbai', 'Delhi', 'Kolkata', 'Chennai', 'Ahmedabad']
 
+function TrademarkThumbnail({ tm, onPreview, size = 'sm' }) {
+  const [hasError, setHasError] = useState(false)
+  const isLarge = size === 'lg'
+  const imgUrl = getImageUrl(tm.image_url)
+
+  if (!imgUrl || hasError) {
+    return (
+      <div 
+        className={`${isLarge ? 'w-14 h-14' : 'w-11 h-11'} shrink-0 mx-auto rounded-lg border border-slate-300 bg-white p-1 flex items-center justify-center text-slate-900 shadow-2xs hover:border-primary-500 transition-all cursor-default select-none`}
+        title={`Word Mark: ${tm.trademark_name || 'N/A'}`}
+      >
+        <span className={`${isLarge ? 'text-[10px]' : 'text-[9px]'} font-black tracking-tight uppercase font-sans line-clamp-2 leading-tight text-slate-950 px-0.5 text-center`}>
+          {tm.trademark_name ? (tm.trademark_name.length > (isLarge ? 12 : 8) ? tm.trademark_name.slice(0, isLarge ? 10 : 7) + '..' : tm.trademark_name) : 'TEXT'}
+        </span>
+      </div>
+    )
+  }
+
+  return (
+    <div 
+      onClick={() => onPreview && onPreview({
+        url: imgUrl,
+        name: tm.trademark_name,
+        appNo: tm.application_number,
+        classNo: tm.class_number
+      })}
+      className={`${isLarge ? 'w-14 h-14' : 'w-11 h-11'} shrink-0 mx-auto rounded-lg border border-slate-200 bg-white p-1 flex items-center justify-center cursor-pointer hover:border-primary-400 hover:shadow-md transition-all group/img relative overflow-hidden`}
+      title="Click to preview logo"
+    >
+      <img 
+        src={imgUrl} 
+        alt={tm.trademark_name || 'Logo'} 
+        className="max-h-full max-w-full object-contain"
+        onError={() => setHasError(true)}
+      />
+      <div className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover/img:opacity-100 flex items-center justify-center transition-opacity">
+        <Maximize2 className={`${isLarge ? 'h-3.5 w-3.5' : 'h-3 w-3'} text-white`} />
+      </div>
+    </div>
+  )
+}
+
 export default function Trademarks() {
   const [page, setPage] = useState(1)
   const [limit, setLimit] = useState(50) // options: 10, 50, 100, 200
@@ -359,46 +401,13 @@ export default function Trademarks() {
                         key={tm.id} 
                         className="hover:bg-primary-50/30 transition-colors duration-150 group"
                       >
-                        {/* Logo Thumbnail */}
+                        {/* Logo / Word Mark Thumbnail */}
                         <td className="py-3.5 px-4 align-top text-center">
-                          {imgUrl ? (
-                            <div 
-                              onClick={() => setPreviewImage({
-                                url: imgUrl,
-                                name: tm.trademark_name,
-                                appNo: tm.application_number,
-                                classNo: tm.class_number
-                              })}
-                              className="w-11 h-11 mx-auto rounded-lg border border-slate-200 bg-slate-50 p-1 flex items-center justify-center cursor-pointer hover:border-primary-400 hover:shadow-md transition-all group/img relative overflow-hidden"
-                              title="Click to preview logo"
-                            >
-                              <img 
-                                src={imgUrl} 
-                                alt={tm.trademark_name || 'Logo'} 
-                                className="max-h-full max-w-full object-contain"
-                                onError={(e) => {
-                                  e.target.style.display = 'none';
-                                  e.target.nextSibling.style.display = 'block';
-                                }}
-                              />
-                              <ImageIcon style={{ display: 'none' }} className="h-4 w-4 text-slate-400" />
-                              <div className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover/img:opacity-100 flex items-center justify-center transition-opacity">
-                                <Maximize2 className="h-3 w-3 text-white" />
-                              </div>
-                            </div>
-                          ) : (
-                            <div 
-                              className="w-11 h-11 mx-auto rounded-lg border-2 border-slate-800 bg-white p-0.5 flex flex-col items-center justify-center text-slate-900 shadow-2xs hover:border-primary-600 transition-all cursor-default" 
-                              title={`Word Mark: ${tm.trademark_name}`}
-                            >
-                              <span className="text-[9px] font-black tracking-tighter uppercase font-sans line-clamp-1 leading-none text-slate-950 px-0.5">
-                                {tm.trademark_name ? (tm.trademark_name.length > 5 ? tm.trademark_name.slice(0, 4) + '..' : tm.trademark_name) : 'TEXT'}
-                              </span>
-                              <span className="text-[6.5px] font-black uppercase tracking-widest text-slate-400 mt-0.5">
-                                MARK
-                              </span>
-                            </div>
-                          )}
+                          <TrademarkThumbnail 
+                            tm={tm} 
+                            onPreview={setPreviewImage} 
+                            size="sm" 
+                          />
                         </td>
 
                         {/* App No & Filing Date */}
@@ -522,41 +531,11 @@ export default function Trademarks() {
                   <div className="space-y-3">
                     {/* Top Row: Logo Thumbnail & Title */}
                     <div className="flex items-start space-x-3.5">
-                      {imgUrl ? (
-                        <div 
-                          onClick={() => setPreviewImage({
-                            url: imgUrl,
-                            name: tm.trademark_name,
-                            appNo: tm.application_number,
-                            classNo: tm.class_number
-                          })}
-                          className="w-14 h-14 shrink-0 rounded-xl border border-slate-200 bg-slate-50 p-1.5 flex items-center justify-center cursor-pointer hover:border-primary-400 hover:shadow-md transition-all group/cardimg relative overflow-hidden"
-                          title="Click to zoom logo"
-                        >
-                          <img 
-                            src={imgUrl} 
-                            alt={tm.trademark_name || 'Logo'} 
-                            className="max-h-full max-w-full object-contain"
-                            onError={(e) => {
-                              e.target.style.display = 'none';
-                              e.target.nextSibling.style.display = 'block';
-                            }}
-                          />
-                          <ImageIcon style={{ display: 'none' }} className="h-5 w-5 text-slate-400" />
-                          <div className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover/cardimg:opacity-100 flex items-center justify-center transition-opacity">
-                            <Maximize2 className="h-3.5 w-3.5 text-white" />
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="w-14 h-14 shrink-0 rounded-xl border-2 border-slate-900 bg-white p-1 flex flex-col items-center justify-center text-center shadow-xs">
-                          <span className="text-[10px] font-black text-slate-950 font-sans uppercase tracking-tight line-clamp-1 leading-tight px-0.5">
-                            {tm.trademark_name ? (tm.trademark_name.length > 7 ? tm.trademark_name.slice(0, 6) + '..' : tm.trademark_name) : 'WORD'}
-                          </span>
-                          <span className="text-[7px] font-extrabold text-slate-400 uppercase tracking-widest mt-0.5">
-                            WORD MARK
-                          </span>
-                        </div>
-                      )}
+                      <TrademarkThumbnail 
+                        tm={tm} 
+                        onPreview={setPreviewImage} 
+                        size="lg" 
+                      />
 
                       <div className="flex-1 min-w-0">
                         <div className="flex flex-wrap items-center gap-1.5 mb-1">

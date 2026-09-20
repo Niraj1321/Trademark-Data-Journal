@@ -18,6 +18,7 @@ const API_BASE_URL = import.meta.env.VITE_API_URL ||
 export default function TrademarkDetail() {
   const { id } = useParams()
   const [isImageModalOpen, setIsImageModalOpen] = useState(false)
+  const [imageError, setImageError] = useState(false)
   
   const { data: trademark, isLoading, error } = useQuery({
     queryKey: ['trademark', id],
@@ -31,6 +32,7 @@ export default function TrademarkDetail() {
   const fullImageUrl = tm.image_url 
     ? (tm.image_url.startsWith('http') ? tm.image_url : `${API_BASE_URL}${tm.image_url}`)
     : null
+  const hasValidImage = Boolean(fullImageUrl && !imageError)
 
   return (
     <div className="space-y-6">
@@ -91,22 +93,15 @@ export default function TrademarkDetail() {
               <span>Trademark Representation</span>
             </h2>
 
-            {fullImageUrl ? (
-              <div className="relative group rounded-xl overflow-hidden border border-slate-200 bg-slate-50/50 p-4 flex flex-col items-center justify-center min-h-[220px]">
+            {hasValidImage ? (
+              <div className="relative group rounded-xl overflow-hidden border border-slate-200 bg-white p-4 flex flex-col items-center justify-center min-h-[220px]">
                 <img 
                   src={fullImageUrl} 
                   alt={tm.trademark_name || 'Trademark Logo'} 
-                  className="max-h-48 max-w-full object-contain rounded transition-transform duration-200 group-hover:scale-105 cursor-pointer shadow-sm"
+                  className="max-h-52 max-w-full object-contain rounded transition-transform duration-200 group-hover:scale-105 cursor-pointer"
                   onClick={() => setIsImageModalOpen(true)}
-                  onError={(e) => {
-                    e.target.style.display = 'none';
-                    e.target.nextSibling.style.display = 'flex';
-                  }}
+                  onError={() => setImageError(true)}
                 />
-                <div style={{ display: 'none' }} className="flex-col items-center justify-center p-6 text-center text-slate-400">
-                  <ImageIcon className="h-10 w-10 mb-2 stroke-1" />
-                  <span className="text-xs font-medium">Image preview not available</span>
-                </div>
 
                 <button
                   onClick={() => setIsImageModalOpen(true)}
@@ -117,48 +112,18 @@ export default function TrademarkDetail() {
                 </button>
               </div>
             ) : (
-              /* Official Trademark Journal Word Mark Representation Specimen Plate */
-              <div className="rounded-xl border-2 border-slate-900/80 bg-white p-6 flex flex-col items-center justify-center min-h-[220px] shadow-sm relative overflow-hidden group">
-                <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-slate-900 via-primary-600 to-slate-900" />
-                
-                {/* Journal Specimen Tag */}
-                <div className="flex items-center justify-between w-full mb-3 pb-2 border-b border-slate-100">
-                  <span className="text-[10px] font-extrabold uppercase tracking-widest text-slate-500 flex items-center space-x-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block"></span>
-                    <span>Gazette Word Mark Specimen</span>
-                  </span>
-                  {tm.class_number && (
-                    <span className="text-[10px] font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded">
-                      Class {tm.class_number}
-                    </span>
-                  )}
-                </div>
-
-                {/* The Exact Bold Word Mark Typography (Like in the Journal PDF) */}
-                <div className="py-5 px-4 my-auto w-full flex items-center justify-center bg-slate-50/50 rounded-lg border border-slate-200/60">
+              /* Clean Trademark Word Mark Representation (Displaying Text Mark as Image Form) */
+              <div className="rounded-xl border border-slate-200 bg-white p-6 flex flex-col items-center justify-center min-h-[220px] shadow-xs">
+                <div className="py-8 px-4 w-full flex items-center justify-center bg-white rounded-lg">
                   <h3 className="text-2xl sm:text-3xl font-black tracking-wider text-slate-950 font-sans uppercase text-center select-all drop-shadow-xs">
                     {tm.trademark_name || 'WORD MARK'}
                   </h3>
-                </div>
-
-                {/* Subtext info */}
-                <div className="w-full mt-3 pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500 font-medium">
-                  <span>Standard Typographic Representation</span>
-                  <button
-                    onClick={() => {
-                      navigator.clipboard.writeText(tm.trademark_name || '');
-                      alert('Trademark name copied to clipboard!');
-                    }}
-                    className="text-primary-600 hover:text-primary-800 font-bold hover:underline"
-                  >
-                    Copy Name
-                  </button>
                 </div>
               </div>
             )}
           </div>
 
-          {fullImageUrl && (
+          {hasValidImage && (
             <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
               <span className="text-[11px] text-slate-500 font-medium">Extracted from Journal PDF</span>
               <a
