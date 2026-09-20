@@ -193,7 +193,7 @@ class PDFExtractor:
                                         app_num_clean = re.sub(r'[^\w\-]', '_', str(record['application_number']))
                                         img_filename = f"{app_num_clean}.jpg"
                                         target_path = images_dir / img_filename
-                                        pil_img.save(target_path, "JPEG", quality=92, optimize=True)
+                                        pil_img.save(target_path, "JPEG", quality=98, subsampling=0, optimize=True)
                                         record["image_path"] = f"images/{journal_no}/{img_filename}"
                                         has_logo = True
                                 except Exception:
@@ -210,7 +210,7 @@ class PDFExtractor:
                                     app_num_clean = re.sub(r'[^\w\-]', '_', str(record['application_number']))
                                     img_filename = f"{app_num_clean}.jpg"
                                     target_path = images_dir / img_filename
-                                    pil_img.save(target_path, "JPEG", quality=92, optimize=True)
+                                    pil_img.save(target_path, "JPEG", quality=98, subsampling=0, dpi=(300, 300), optimize=True)
                                     record["image_path"] = f"images/{journal_no}/{img_filename}"
                                 except Exception:
                                     pass
@@ -532,30 +532,33 @@ class PDFExtractor:
         """
         from PIL import Image, ImageDraw, ImageFont
         
-        width, height = 600, 300
+        width, height = 1200, 600
         img = Image.new('RGB', (width, height), color=(255, 255, 255))
         draw = ImageDraw.Draw(img)
         
-        # Elegant outer border
-        draw.rectangle([(10, 10), (width - 11, height - 11)], outline=(226, 232, 240), width=2)
+        # High-res outer border
+        draw.rectangle([(20, 20), (width - 21, height - 21)], outline=(218, 225, 233), width=3)
+        draw.rectangle([(28, 28), (width - 29, height - 29)], outline=(241, 245, 249), width=1)
         
-        # Top badge: 'TRADE MARK (WORD)' • CLASS XX
-        header_text = 'TRADE MARK (WORD)'
+        # Top badge: 'TRADE MARK (WORD MARK SPECIMEN)' • CLASS XX
+        header_text = 'TRADE MARK (WORD MARK SPECIMEN)'
         if class_number:
             header_text += f' • CLASS {class_number}'
             
         try:
-            font_small = ImageFont.truetype('arial.ttf', 13)
+            font_header = ImageFont.truetype('arialbd.ttf', 24)
+            font_footer = ImageFont.truetype('arial.ttf', 22)
         except Exception:
-            font_small = ImageFont.load_default()
+            font_header = ImageFont.load_default()
+            font_footer = ImageFont.load_default()
             
-        draw.text((25, 22), header_text, fill=(100, 116, 139), font=font_small)
+        draw.text((45, 42), header_text, fill=(100, 116, 139), font=font_header)
         
-        # Main trademark text (auto-fit to box)
+        # Main trademark text (auto-fit to 1200x600 box)
         clean_name = trademark_name.strip() if trademark_name else "WORD MARK"
-        font_size = 46
+        font_size = 96
         font = None
-        while font_size >= 14:
+        while font_size >= 24:
             try:
                 font = ImageFont.truetype('arialbd.ttf', font_size)
             except Exception:
@@ -567,9 +570,9 @@ class PDFExtractor:
             bbox = draw.textbbox((0, 0), clean_name, font=font)
             text_w = bbox[2] - bbox[0]
             text_h = bbox[3] - bbox[1]
-            if text_w <= width - 60 and text_h <= height - 110:
+            if text_w <= width - 120 and text_h <= height - 200:
                 break
-            font_size -= 4
+            font_size -= 6
             
         bbox = draw.textbbox((0, 0), clean_name, font=font)
         text_w = bbox[2] - bbox[0]
@@ -581,8 +584,8 @@ class PDFExtractor:
         
         # Bottom footer info
         if app_number:
-            bottom_text = f'App No: {app_number}'
-            draw.text((25, height - 36), bottom_text, fill=(148, 163, 184), font=font_small)
+            bottom_text = f'Application No: {app_number}'
+            draw.text((45, height - 65), bottom_text, fill=(148, 163, 184), font=font_footer)
             
         return img
     
